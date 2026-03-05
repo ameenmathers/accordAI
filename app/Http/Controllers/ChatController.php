@@ -13,6 +13,7 @@ use App\Traits\UsesEvidenceRules;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
@@ -248,6 +249,78 @@ class ChatController extends Controller
 
         return redirect()->route('chats.index')
             ->with('success', 'Chat finalized. Context memory extracted.');
+    }
+
+    /**
+     * Poll for new messages after a given message ID.
+     * GET /chats/{chat}/messages?after={id}
+     */
+    public function pollMessages(Request $request, Chat $chat): JsonResponse
+    {
+        if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {
+            abort(403);
+        }
+
+        $afterId = (int) $request->query('after', 0);
+
+        $messages = $chat->messages()
+            ->with('sender:id,name')
+            ->when($afterId > 0, fn ($q) => $q->where('id', '>', $afterId))
+            ->orderBy('created_at')
+            ->get()
+            ->map(fn ($msg) => [
+                'id' => $msg->id,
+                'sender_type' => $msg->sender_type,
+                'sender' => $msg->sender ? ['id' => $msg->sender->id, 'name' => $msg->sender->name] : null,
+                'content' => $msg->content,
+                'created_at' => $msg->created_at->toISOString(),
+            ]);
+
+        return response()->json($messages);
+    }
+
+    /**
+     * Record that the current user is typing.
+     * POST /chats/{chat}/typing
+     */
+    public function recordTyping(Request $request, Chat $chat): JsonResponse
+    {
+        if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {
+            abort(403);
+        }
+
+        $key = "chat_typing_{$chat->id}";
+        $typers = Cache::get($key, []);
+        $typers[$request->user()->id] = [
+            'name' => $request->user()->name,
+            'expires_at' => now()->addSeconds(5)->timestamp,
+        ];
+        Cache::put($key, $typers, 60);
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Get users currently typing (excluding self).
+     * GET /chats/{chat}/typing
+     */
+    public function getTyping(Request $request, Chat $chat): JsonResponse
+    {
+        if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {
+            abort(403);
+        }
+
+        $key = "chat_typing_{$chat->id}";
+        $typers = Cache::get($key, []);
+        $now = now()->timestamp;
+        $userId = $request->user()->id;
+
+        $active = collect($typers)
+            ->filter(fn ($t, $id) => $t['expires_at'] > $now && (int) $id !== $userId)
+            ->map(fn ($t) => ['name' => $t['name']])
+            ->values();
+
+        return response()->json($active);
     }
 
     private function getContextTypes(): array

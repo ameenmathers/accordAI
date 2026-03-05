@@ -66,8 +66,8 @@ class AiReasoningService
                 ['role' => 'system', 'content' => $systemPrompt],
                 ['role' => 'user', 'content' => $userMessage],
             ],
-            'max_tokens' => 350,
-            'temperature' => 0.65, // slightly lower = more consistent mediation behavior
+            'max_tokens' => 130, // short, casual replies — 2-3 sentences
+            'temperature' => 0.85, // warmer, more natural
         ]);
 
         $aiContent = $response->choices[0]->message->content;

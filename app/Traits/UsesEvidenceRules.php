@@ -49,8 +49,8 @@ trait UsesEvidenceRules
     {
         $trimmed = trim($messageContent);
 
-        // Skip purely social messages below 10 characters
-        if (strlen($trimmed) < 10) {
+        // Only skip completely empty messages
+        if (strlen($trimmed) < 1) {
             return false;
         }
 
