@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\InvitationController;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 use Laravel\Fortify\Features;
@@ -12,9 +13,38 @@ Route::get('/', function () {
     ]);
 })->name('home');
 
-Route::get('dashboard', function () {
-    return Inertia::render('Dashboard');
+Route::get('dashboard', function (Request $request) {
+    $pendingInvitations = $request->user()
+        ->pendingInvitations()
+        ->with(['chat:id,context_type,title,created_by', 'chat.creator:id,name'])
+        ->get()
+        ->map(fn ($inv) => [
+            'id' => $inv->id,
+            'chat_title' => $inv->chat->title ?? ucfirst($inv->chat->context_type).' Discussion',
+            'context_type' => $inv->chat->context_type,
+            'invited_by' => $inv->chat->creator->name,
+        ]);
+
+    return Inertia::render('Dashboard', [
+        'pendingInvitations' => $pendingInvitations,
+    ]);
 })->middleware(['auth', 'verified'])->name('dashboard');
+
+// ── User search (web, returns JSON) ──────────────────────────────────────────
+Route::middleware(['auth'])->get('/users/search', function (Request $request) {
+    $q = $request->validate(['q' => ['required', 'string', 'min:1']])['q'];
+
+    $users = \App\Models\User::where('id', '!=', $request->user()->id)
+        ->where(function ($query) use ($q) {
+            $query->where('username', 'like', "%{$q}%")
+                ->orWhere('name', 'like', "%{$q}%");
+        })
+        ->select(['id', 'name', 'username'])
+        ->limit(8)
+        ->get();
+
+    return response()->json($users);
+})->name('users.search');
 
 // ── AccordAI Chat Routes ──────────────────────────────────────────────────
 Route::middleware(['auth', 'verified'])->prefix('chats')->name('chats.')->group(function () {
@@ -23,34 +53,32 @@ Route::middleware(['auth', 'verified'])->prefix('chats')->name('chats.')->group(
     Route::get('/{chat}', [ChatController::class, 'show'])->name('show');
     Route::post('/{chat}/messages', [ChatController::class, 'sendMessage'])->name('messages.store');
     Route::post('/{chat}/finalize', [ChatController::class, 'finalize'])->name('finalize');
+    Route::post('/{chat}/invite-link', [ChatController::class, 'generateInviteLink'])->name('invite-link');
 });
 
 // ── Invitation Routes ─────────────────────────────────────────────────────
-//
-// Public (no auth):
-//   /invitations/{token}                   → landing page (show invite details)
-//   /invitations/{token}/login-redirect    → stores intended URL, sends to /login
-//   /invitations/{token}/register-redirect → stores token in session, sends to /register
-//
-// Protected (auth required):
-//   /invitations/{token}/accept            → does the actual acceptance
-//
 Route::prefix('invitations')->name('invitations.')->group(function () {
 
-    // Public landing page — seen before auth
+    // Public shareable-link landing page
     Route::get('/{token}', [InvitationController::class, 'show'])
         ->name('show');
 
-    // Redirect helpers that preserve the token across the auth flow
     Route::get('/{token}/login-redirect', [InvitationController::class, 'redirectToLogin'])
         ->name('login-redirect');
+
     Route::get('/{token}/register-redirect', [InvitationController::class, 'redirectToRegister'])
         ->name('register-redirect');
 
-    // Protected — auth middleware redirects to login, then returns here
     Route::middleware(['auth'])->group(function () {
+        // Shareable link acceptance (GET so redirect from landing page works)
         Route::get('/{token}/accept', [InvitationController::class, 'accept'])
             ->name('accept');
+
+        // Dashboard accept/decline (POST, uses invitation ID)
+        Route::post('/{invitation}/accept', [InvitationController::class, 'acceptById'])
+            ->name('accept-by-id');
+        Route::post('/{invitation}/decline', [InvitationController::class, 'declineById'])
+            ->name('decline-by-id');
     });
 });
 

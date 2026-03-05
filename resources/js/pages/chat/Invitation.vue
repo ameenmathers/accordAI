@@ -4,7 +4,6 @@ import { MessageSquare, LogIn, UserPlus, ShieldCheck, Sparkles } from 'lucide-vu
 
 const props = defineProps<{
     token: string;
-    invited_email: string;
     invited_by: string;
     chat_title: string;
     context_type: string;
@@ -57,8 +56,7 @@ function contextStyle(type: string) {
                 </p>
 
                 <p class="mt-3 rounded-xl bg-gray-50 px-3 py-2.5 text-xs text-gray-500">
-                    This invitation was sent to <strong class="text-gray-700">{{ invited_email }}</strong>.
-                    Use that email when logging in or registering.
+                    Sign in or create a free account to join. No email verification required.
                 </p>
 
                 <!-- How it works -->
@@ -97,7 +95,7 @@ function contextStyle(type: string) {
                         Create a free account to join
                     </a>
                     <p class="text-center text-xs text-gray-400">
-                        Register with <strong class="text-gray-600">{{ invited_email }}</strong>
+                        Free to join — no credit card required
                     </p>
                 </div>
             </div>

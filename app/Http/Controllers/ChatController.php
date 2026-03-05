@@ -6,9 +6,11 @@ use App\Mail\ChatInvitationMail;
 use App\Models\Chat;
 use App\Models\ChatInvitation;
 use App\Models\Message;
+use App\Models\User;
 use App\Services\AiMemoryService;
 use App\Services\AiReasoningService;
 use App\Traits\UsesEvidenceRules;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
@@ -33,7 +35,7 @@ class ChatController extends Controller
     {
         $chats = $request->user()
             ->chats()
-            ->with(['creator:id,name', 'participants:id,name', 'pendingInvitations'])
+            ->with(['creator:id,name', 'participants:id,name', 'pendingInvitations.invitedUser:id,name,username'])
             ->withCount('messages')
             ->latest()
             ->get()
@@ -44,7 +46,12 @@ class ChatController extends Controller
                 'status' => $chat->status,
                 'created_by' => $chat->creator?->only(['id', 'name']),
                 'participants' => $chat->participants->map->only(['id', 'name'])->values(),
-                'pending_invitations' => $chat->pendingInvitations->map->only(['invited_email'])->values(),
+                'pending_invitations' => $chat->pendingInvitations->map(fn ($inv) => [
+                    'id' => $inv->id,
+                    'display' => $inv->invitedUser
+                        ? '@'.$inv->invitedUser->username
+                        : ($inv->invited_email ?? 'via link'),
+                ])->values(),
                 'messages_count' => $chat->messages_count,
                 'updated_at' => $chat->updated_at,
             ]);
@@ -56,32 +63,28 @@ class ChatController extends Controller
     }
 
     /**
-     * Create a new chat and send email invitations.
+     * Create a new chat and invite participants by username.
      * POST /chats
-     *
-     * Invitees are specified by email address, not user ID.
-     * Chat starts as 'waiting' until all invitees accept.
-     * If no invitees, chat starts as 'active' immediately.
      */
     public function store(Request $request): RedirectResponse
     {
         $validated = $request->validate([
             'context_type' => ['required', 'string', 'in:relationship,business,family,financial,legal,general'],
             'title' => ['nullable', 'string', 'max:255'],
-            // Up to 2 email addresses to invite (max 3 participants total)
-            'invitee_emails' => ['nullable', 'array', 'max:2'],
-            'invitee_emails.*' => ['email', 'max:255'],
+            'invitee_usernames' => ['nullable', 'array', 'max:2'],
+            'invitee_usernames.*' => ['string', 'max:255'],
         ]);
 
-        $inviteeEmails = collect($validated['invitee_emails'] ?? [])
+        $invitees = collect($validated['invitee_usernames'] ?? [])
             ->filter()
-            ->reject(fn ($email) => strtolower($email) === strtolower($request->user()->email))
-            ->unique()
+            ->map(fn ($u) => User::where('username', $u)->first())
+            ->filter()
+            ->reject(fn ($u) => $u->id === $request->user()->id)
+            ->unique('id')
             ->take(2)
             ->values();
 
-        // Chat waits for invitees if any were added, otherwise active immediately
-        $status = $inviteeEmails->isNotEmpty() ? 'waiting' : 'active';
+        $status = $invitees->isNotEmpty() ? 'waiting' : 'active';
 
         $chat = Chat::create([
             'context_type' => $validated['context_type'],
@@ -90,18 +93,20 @@ class ChatController extends Controller
             'status' => $status,
         ]);
 
-        // Creator is always the first participant
         $chat->participants()->attach($request->user()->id);
 
-        // Create an invitation record and send an email for each invitee
-        foreach ($inviteeEmails as $email) {
+        foreach ($invitees as $invitee) {
             $invitation = ChatInvitation::create([
                 'chat_id' => $chat->id,
-                'invited_email' => $email,
+                'invited_user_id' => $invitee->id,
                 'token' => Str::uuid()->toString(),
             ]);
 
-            Mail::to($email)->send(new ChatInvitationMail($invitation, $request->user()));
+            try {
+                Mail::to($invitee->email)->send(new ChatInvitationMail($invitation, $request->user()));
+            } catch (\Exception) {
+                // Non-fatal if email fails
+            }
         }
 
         return redirect()->route('chats.show', $chat->id);
@@ -130,7 +135,7 @@ class ChatController extends Controller
                 'created_at' => $msg->created_at->toISOString(),
             ]);
 
-        $chat->load(['creator:id,name', 'participants:id,name', 'pendingInvitations']);
+        $chat->load(['creator:id,name', 'participants:id,name', 'pendingInvitations.invitedUser:id,name,username']);
 
         return Inertia::render('chat/Show', [
             'chat' => [
@@ -140,13 +145,42 @@ class ChatController extends Controller
                 'status' => $chat->status,
                 'created_by' => $chat->creator?->only(['id', 'name']),
                 'participants' => $chat->participants->map->only(['id', 'name'])->values(),
-                'pending_invitations' => $chat->pendingInvitations->map->only(['invited_email'])->values(),
+                'pending_invitations' => $chat->pendingInvitations->map(fn ($inv) => [
+                    'id' => $inv->id,
+                    'display' => $inv->invitedUser
+                        ? '@'.$inv->invitedUser->username
+                        : ($inv->invited_email ?? 'via link'),
+                ])->values(),
             ],
             'messages' => $messages,
             'currentUser' => [
                 'id' => $request->user()->id,
                 'name' => $request->user()->name,
             ],
+        ]);
+    }
+
+    /**
+     * Generate a shareable invite link for this chat (creator only).
+     * POST /chats/{chat}/invite-link
+     */
+    public function generateInviteLink(Request $request, Chat $chat): JsonResponse
+    {
+        if ($chat->created_by !== $request->user()->id) {
+            abort(403);
+        }
+
+        if (! $chat->canAddParticipant()) {
+            return response()->json(['error' => 'This session already has the maximum number of participants.'], 422);
+        }
+
+        $invitation = ChatInvitation::create([
+            'chat_id' => $chat->id,
+            'token' => Str::uuid()->toString(),
+        ]);
+
+        return response()->json([
+            'url' => route('invitations.show', $invitation->token),
         ]);
     }
 
@@ -160,7 +194,6 @@ class ChatController extends Controller
             abort(403);
         }
 
-        // Block messages while waiting for invitees to join
         if ($chat->isWaiting()) {
             return back()->with('error', 'Waiting for all participants to join before the session can begin.');
         }

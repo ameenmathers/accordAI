@@ -8,40 +8,21 @@ use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 
-/**
- * Handles the full invitation acceptance flow for both existing and new users.
- *
- * Two different auth paths — both handled:
- *
- * ── Existing user (login) ─────────────────────────────────────────────────
- *  1. /invitations/{token}          → public landing page
- *  2. "Log In" button               → redirectToLogin() stores url.intended, sends to /login
- *  3. After login                   → Laravel redirects to url.intended automatically
- *  4. /invitations/{token}/accept   → accept() verifies email, adds to chat
- *
- * ── New user (register) ──────────────────────────────────────────────────
- *  1. /invitations/{token}          → public landing page
- *  2. "Create Account" button       → redirectToRegister() stores token in session, sends to /register
- *  3. After registration            → FortifyServiceProvider checks session('pending_invitation_token')
- *                                     and redirects to /invitations/{token}/accept
- *  4. /invitations/{token}/accept   → accept() verifies email, adds to chat
- */
 class InvitationController extends Controller
 {
     /**
-     * Public landing page — shown before the user is asked to log in or register.
+     * Public landing page for shareable links.
      * No auth required. Shows who invited them and what the session is about.
-     *
      * GET /invitations/{token}
      */
     public function show(string $token): Response|RedirectResponse
     {
         $invitation = ChatInvitation::where('token', $token)
             ->whereNull('accepted_at')
+            ->whereNull('declined_at')
             ->with(['chat:id,context_type,title,created_by', 'chat.creator:id,name'])
             ->first();
 
-        // Already accepted or invalid token — send to dashboard or login
         if (! $invitation) {
             $message = 'This invitation link has already been used or is no longer valid.';
 
@@ -50,20 +31,19 @@ class InvitationController extends Controller
                 : redirect()->route('login')->with('status', $message);
         }
 
-        // If the user is already logged in and their email matches → accept immediately
+        // If user is already logged in → accept immediately (shareable links are open to any user)
         if (auth()->check()) {
-            if (strtolower(auth()->user()->email) === strtolower($invitation->invited_email)) {
-                return $this->processAcceptance($invitation);
+            // For user-targeted invitations, verify they're the right person
+            if ($invitation->invited_user_id && $invitation->invited_user_id !== auth()->id()) {
+                return redirect()->route('chats.index')
+                    ->with('error', 'This invitation was sent to a different user.');
             }
 
-            // Logged in but wrong account
-            return redirect()->route('chats.index')
-                ->with('error', "This invitation was sent to {$invitation->invited_email}. Please log in with that account.");
+            return $this->processAcceptance($invitation);
         }
 
         return Inertia::render('chat/Invitation', [
             'token' => $token,
-            'invited_email' => $invitation->invited_email,
             'invited_by' => $invitation->chat->creator->name,
             'chat_title' => $invitation->chat->title ?? ucfirst($invitation->chat->context_type).' Discussion',
             'context_type' => $invitation->chat->context_type,
@@ -73,13 +53,10 @@ class InvitationController extends Controller
     /**
      * Stores the acceptance URL as Laravel's "intended" destination, then sends
      * the user to /login. After login, Laravel auto-redirects to the intended URL.
-     *
      * GET /invitations/{token}/login-redirect
      */
     public function redirectToLogin(string $token): RedirectResponse
     {
-        // Store the protected accept URL as the intended destination.
-        // Laravel's auth middleware reads session('url.intended') after login.
         session(['url.intended' => route('invitations.accept', $token)]);
 
         return redirect()->route('login');
@@ -87,30 +64,24 @@ class InvitationController extends Controller
 
     /**
      * Stores the token in session and sends the user to /register.
-     * FortifyServiceProvider reads this session value after registration
-     * and redirects to the acceptance URL instead of /dashboard.
-     *
      * GET /invitations/{token}/register-redirect
      */
     public function redirectToRegister(string $token): RedirectResponse
     {
-        // Fortify's RegisterResponse ignores url.intended, so we store the token
-        // separately. FortifyServiceProvider checks for this key post-registration.
         session(['pending_invitation_token' => $token]);
 
         return redirect()->route('register');
     }
 
     /**
-     * The protected acceptance endpoint — requires the user to be logged in.
-     * Verifies email, adds participant, activates chat if all invitations resolved.
-     *
+     * Shareable link acceptance — requires auth.
      * GET /invitations/{token}/accept
      */
     public function accept(Request $request, string $token): RedirectResponse
     {
         $invitation = ChatInvitation::where('token', $token)
             ->whereNull('accepted_at')
+            ->whereNull('declined_at')
             ->with('chat')
             ->first();
 
@@ -119,12 +90,62 @@ class InvitationController extends Controller
                 ->with('error', 'This invitation has already been used or is no longer valid.');
         }
 
-        if (strtolower($request->user()->email) !== strtolower($invitation->invited_email)) {
+        if ($invitation->invited_user_id && $invitation->invited_user_id !== $request->user()->id) {
             return redirect()->route('chats.index')
-                ->with('error', "This invitation was sent to {$invitation->invited_email}. You are logged in as {$request->user()->email}.");
+                ->with('error', 'This invitation was sent to a different user.');
         }
 
         return $this->processAcceptance($invitation);
+    }
+
+    /**
+     * Dashboard accept — for username-targeted invitations.
+     * POST /invitations/{invitation}/accept
+     */
+    public function acceptById(Request $request, ChatInvitation $invitation): RedirectResponse
+    {
+        if ($invitation->invited_user_id !== $request->user()->id) {
+            abort(403);
+        }
+
+        if (! $invitation->isPending()) {
+            return redirect()->route('dashboard')
+                ->with('error', 'This invitation is no longer pending.');
+        }
+
+        $invitation->load('chat');
+
+        return $this->processAcceptance($invitation);
+    }
+
+    /**
+     * Dashboard decline — for username-targeted invitations.
+     * POST /invitations/{invitation}/decline
+     */
+    public function declineById(Request $request, ChatInvitation $invitation): RedirectResponse
+    {
+        if ($invitation->invited_user_id !== $request->user()->id) {
+            abort(403);
+        }
+
+        if (! $invitation->isPending()) {
+            return redirect()->route('dashboard')
+                ->with('error', 'This invitation is no longer pending.');
+        }
+
+        $invitation->update(['declined_at' => now()]);
+
+        // If all invitations resolved (declined or accepted), check chat status
+        $chat = $invitation->chat;
+        if ($chat->pendingInvitations()->count() === 0 && $chat->isWaiting()) {
+            // If at least 2 participants, activate; otherwise keep waiting
+            if ($chat->participants()->count() >= 2) {
+                $chat->update(['status' => 'active']);
+            }
+        }
+
+        return redirect()->route('dashboard')
+            ->with('success', 'Invitation declined.');
     }
 
     /**
@@ -140,12 +161,11 @@ class InvitationController extends Controller
 
         $invitation->update(['accepted_at' => now()]);
 
-        // Activate the chat once all pending invitations are resolved
         if ($chat->pendingInvitations()->count() === 0 && $chat->isWaiting()) {
             $chat->update(['status' => 'active']);
         }
 
         return redirect()->route('chats.show', $chat->id)
-            ->with('success', 'You have joined the mediation session. It is now active.');
+            ->with('success', 'You have joined the mediation session.');
     }
 }

@@ -44,7 +44,9 @@ class Chat extends Model
 
     public function pendingInvitations(): HasMany
     {
-        return $this->hasMany(ChatInvitation::class)->whereNull('accepted_at');
+        return $this->hasMany(ChatInvitation::class)
+            ->whereNull('accepted_at')
+            ->whereNull('declined_at');
     }
 
     public function canAddParticipant(): bool

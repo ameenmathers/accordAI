@@ -18,6 +18,7 @@ class User extends Authenticatable
 
     protected $fillable = [
         'name',
+        'username',
         'email',
         'password',
     ];
@@ -55,5 +56,13 @@ class User extends Authenticatable
     public function contextNotes(): HasMany
     {
         return $this->hasMany(UserContextNote::class);
+    }
+
+    // Pending invitations sent to this user (by username)
+    public function pendingInvitations(): HasMany
+    {
+        return $this->hasMany(ChatInvitation::class, 'invited_user_id')
+            ->whereNull('accepted_at')
+            ->whereNull('declined_at');
     }
 }

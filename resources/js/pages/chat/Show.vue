@@ -3,7 +3,7 @@ import { Head, useForm, router } from '@inertiajs/vue3';
 import { ref, nextTick, onMounted, watch } from 'vue';
 import AppLayout from '@/layouts/AppLayout.vue';
 import type { BreadcrumbItem } from '@/types';
-import { Send, Bot, AlertCircle, CheckCircle2, Users, Hourglass, X, Sparkles } from 'lucide-vue-next';
+import { Send, Bot, AlertCircle, CheckCircle2, Users, Hourglass, X, Sparkles, Link2, Copy, Check } from 'lucide-vue-next';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Sender { id: number; name: string }
@@ -15,7 +15,7 @@ interface Message {
     created_at: string;
 }
 interface Participant { id: number; name: string }
-interface PendingInvitation { invited_email: string }
+interface PendingInvitation { id: number; display: string }
 interface Chat {
     id: number;
     context_type: string;
@@ -74,6 +74,31 @@ function handleKeydown(e: KeyboardEvent) {
 // ── Finalize ───────────────────────────────────────────────────────────────
 const confirmingFinalize = ref(false);
 const isCreator = props.currentUser.id === props.chat.created_by.id;
+
+// ── Invite link ────────────────────────────────────────────────────────────
+const inviteLink = ref('');
+const linkCopied = ref(false);
+const generatingLink = ref(false);
+
+async function generateInviteLink() {
+    generatingLink.value = true;
+    try {
+        const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content ?? '';
+        const res = await fetch(`/chats/${props.chat.id}/invite-link`, {
+            method: 'POST',
+            headers: { 'X-CSRF-TOKEN': csrfToken, 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        });
+        const data = await res.json();
+        inviteLink.value = data.url;
+    } catch { /* non-fatal */ }
+    generatingLink.value = false;
+}
+
+async function copyLink() {
+    await navigator.clipboard.writeText(inviteLink.value);
+    linkCopied.value = true;
+    setTimeout(() => { linkCopied.value = false; }, 2000);
+}
 
 function finalizeChat() {
     router.post(`/chats/${props.chat.id}/finalize`, {}, {
@@ -135,7 +160,7 @@ function avatarColor(senderId: number) {
                             <span class="truncate">
                                 {{ chat.participants.map(p => p.name).join(' · ') }}
                                 <template v-if="chat.pending_invitations.length">
-                                    · <span class="text-amber-500">{{ chat.pending_invitations.map(i => i.invited_email).join(', ') }} (pending)</span>
+                                    · <span class="text-amber-500">{{ chat.pending_invitations.map(i => i.display).join(', ') }} (pending)</span>
                                 </template>
                             </span>
                         </div>
@@ -144,6 +169,17 @@ function avatarColor(senderId: number) {
 
                 <!-- Right side -->
                 <div class="ml-4 flex flex-shrink-0 items-center gap-2">
+                    <!-- Invite link button (creator only, not finalized) -->
+                    <button
+                        v-if="isCreator && chat.status !== 'finalized'"
+                        @click="generateInviteLink"
+                        :disabled="generatingLink || !!inviteLink"
+                        class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                        <Link2 class="h-3 w-3" />
+                        {{ generatingLink ? 'Generating…' : 'Invite Link' }}
+                    </button>
+
                     <span
                         v-if="chat.status === 'waiting'"
                         class="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-600 ring-1 ring-amber-200"
@@ -176,10 +212,32 @@ function avatarColor(senderId: number) {
                 <div class="flex items-start gap-2.5">
                     <Hourglass class="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
                     <p class="text-sm text-amber-700">
-                        Waiting for <strong>{{ chat.pending_invitations.map(i => i.invited_email).join(', ') }}</strong> to accept their invitation.
+                        Waiting for <strong>{{ chat.pending_invitations.map(i => i.display).join(', ') }}</strong> to accept their invitation.
                         Messaging will unlock once everyone joins.
                     </p>
                 </div>
+            </div>
+
+            <!-- ── Invite link banner ───────────────────────────────────── -->
+            <div
+                v-if="inviteLink"
+                class="flex items-center gap-3 border-b border-blue-100 bg-blue-50 px-6 py-3"
+            >
+                <Link2 class="h-4 w-4 flex-shrink-0 text-blue-500" />
+                <p class="min-w-0 flex-1 truncate text-xs text-blue-700">
+                    Share this link: <span class="font-mono font-medium">{{ inviteLink }}</span>
+                </p>
+                <button
+                    @click="copyLink"
+                    class="inline-flex flex-shrink-0 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700"
+                >
+                    <Check v-if="linkCopied" class="h-3 w-3" />
+                    <Copy v-else class="h-3 w-3" />
+                    {{ linkCopied ? 'Copied!' : 'Copy' }}
+                </button>
+                <button @click="inviteLink = ''" class="text-blue-400 hover:text-blue-600">
+                    <X class="h-4 w-4" />
+                </button>
             </div>
 
             <!-- ── Messages ─────────────────────────────────────────────── -->

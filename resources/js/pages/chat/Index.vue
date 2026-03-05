@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { Head, Link, useForm } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import AppLayout from '@/layouts/AppLayout.vue';
 import type { BreadcrumbItem } from '@/types';
-import { MessageSquare, Plus, Users, Clock, CheckCircle, Hourglass, ChevronRight, X, Sparkles } from 'lucide-vue-next';
+import { MessageSquare, Plus, Users, Clock, CheckCircle, Hourglass, ChevronRight, X, Sparkles, Search, UserPlus } from 'lucide-vue-next';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Participant { id: number; name: string }
-interface PendingInvitation { invited_email: string }
+interface PendingInvitation { id: number; display: string }
 interface Chat {
     id: number;
     context_type: string;
@@ -20,6 +20,7 @@ interface Chat {
     updated_at: string;
 }
 interface ContextType { value: string; label: string }
+interface UserResult { id: number; name: string; username: string }
 
 const props = defineProps<{ chats: Chat[]; contextTypes: ContextType[] }>();
 
@@ -34,18 +35,55 @@ const showCreateModal = ref(false);
 const form = useForm({
     context_type: 'general',
     title: '',
-    invitee_emails: ['', ''],
+    invitee_usernames: [] as string[],
 });
 
 function createChat() {
-    form.invitee_emails = form.invitee_emails.filter(e => e.trim() !== '');
     form.post('/chats', {
         onSuccess: () => {
             showCreateModal.value = false;
             form.reset();
-            form.invitee_emails = ['', ''];
+            form.invitee_usernames = [];
+            selectedUsers.value = [];
+            userSearch.value = '';
         },
     });
+}
+
+// ── Username search ────────────────────────────────────────────────────────
+const userSearch = ref('');
+const userResults = ref<UserResult[]>([]);
+const searchLoading = ref(false);
+const selectedUsers = ref<UserResult[]>([]);
+let searchTimer: ReturnType<typeof setTimeout>;
+
+watch(userSearch, (q) => {
+    clearTimeout(searchTimer);
+    if (q.trim().length < 1) { userResults.value = []; return; }
+    searchLoading.value = true;
+    searchTimer = setTimeout(async () => {
+        try {
+            const res = await fetch(`/users/search?q=${encodeURIComponent(q)}`, {
+                headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const data = await res.json();
+            userResults.value = data.filter((u: UserResult) => !selectedUsers.value.find(s => s.id === u.id));
+        } catch { userResults.value = []; }
+        searchLoading.value = false;
+    }, 250);
+});
+
+function selectUser(user: UserResult) {
+    if (selectedUsers.value.length >= 2) return;
+    selectedUsers.value.push(user);
+    form.invitee_usernames = selectedUsers.value.map(u => u.username);
+    userSearch.value = '';
+    userResults.value = [];
+}
+
+function removeUser(id: number) {
+    selectedUsers.value = selectedUsers.value.filter(u => u.id !== id);
+    form.invitee_usernames = selectedUsers.value.map(u => u.username);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -102,7 +140,7 @@ function chatDisplayTitle(chat: Chat): string {
                     </div>
                     <h3 class="mt-4 text-base font-semibold text-gray-900">No sessions yet</h3>
                     <p class="mt-1.5 max-w-xs text-sm text-gray-400">
-                        Start a mediation session and invite participants by email.
+                        Start a mediation session and invite participants by username.
                     </p>
                     <button
                         @click="showCreateModal = true"
@@ -120,18 +158,15 @@ function chatDisplayTitle(chat: Chat): string {
                             :href="`/chats/${chat.id}`"
                             class="flex items-center gap-4 rounded-2xl px-4 py-4 transition hover:bg-gray-50"
                         >
-                            <!-- Context icon -->
                             <div :class="['flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl', contextStyle(chat.context_type).bg]">
                                 <MessageSquare :class="['h-5 w-5', contextStyle(chat.context_type).text]" />
                             </div>
 
-                            <!-- Main content -->
                             <div class="min-w-0 flex-1">
                                 <div class="flex items-center gap-2">
                                     <span class="truncate text-sm font-semibold text-gray-900">
                                         {{ chatDisplayTitle(chat) }}
                                     </span>
-                                    <!-- Status badge -->
                                     <span
                                         v-if="chat.status === 'waiting'"
                                         class="inline-flex flex-shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-600 ring-1 ring-amber-100"
@@ -155,19 +190,17 @@ function chatDisplayTitle(chat: Chat): string {
                                     </span>
                                 </div>
 
-                                <!-- Participants -->
                                 <div class="mt-0.5 flex items-center gap-1 text-xs text-gray-400">
                                     <Users class="h-3 w-3 flex-shrink-0" />
                                     <span class="truncate">
                                         {{ chat.participants.map(p => p.name).join(', ') }}
                                         <template v-if="chat.pending_invitations.length">
-                                            · <span class="text-amber-500">{{ chat.pending_invitations.map(i => i.invited_email).join(', ') }} invited</span>
+                                            · <span class="text-amber-500">{{ chat.pending_invitations.map(i => i.display).join(', ') }} invited</span>
                                         </template>
                                     </span>
                                 </div>
                             </div>
 
-                            <!-- Right meta -->
                             <div class="flex flex-shrink-0 items-center gap-3 text-xs text-gray-400">
                                 <span class="hidden sm:block">{{ chat.messages_count }} msgs</span>
                                 <span class="inline-flex items-center gap-1">
@@ -191,7 +224,6 @@ function chatDisplayTitle(chat: Chat): string {
             >
                 <div class="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
 
-                    <!-- Modal header -->
                     <div class="flex items-start justify-between">
                         <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-gray-100">
                             <Sparkles class="h-5 w-5 text-gray-700" />
@@ -205,14 +237,14 @@ function chatDisplayTitle(chat: Chat): string {
                     </div>
                     <h2 class="mt-4 text-base font-semibold text-gray-900">New Mediation Session</h2>
                     <p class="mt-1 text-sm text-gray-400">
-                        Invite participants by email. They must join before the session begins.
+                        Search for participants by username. They'll see the invite on their dashboard.
                     </p>
 
                     <form @submit.prevent="createChat" class="mt-5 space-y-4">
 
                         <!-- Context type -->
                         <div>
-                            <label class="mb-1.5 block text-xs font-medium text-gray-500 uppercase tracking-wide">Context Type</label>
+                            <label class="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-500">Context Type</label>
                             <select
                                 v-model="form.context_type"
                                 class="block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 focus:border-gray-400 focus:bg-white focus:outline-none transition"
@@ -224,40 +256,75 @@ function chatDisplayTitle(chat: Chat): string {
 
                         <!-- Title -->
                         <div>
-                            <label class="mb-1.5 block text-xs font-medium text-gray-500 uppercase tracking-wide">
+                            <label class="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-500">
                                 Session Title <span class="normal-case text-gray-300">(optional)</span>
                             </label>
                             <input
                                 v-model="form.title"
                                 type="text"
                                 placeholder="e.g. Budget planning disagreement"
-                                class="block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm placeholder:text-gray-300 focus:border-gray-400 focus:bg-white focus:outline-none transition"
+                                class="block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-300 focus:border-gray-400 focus:bg-white focus:outline-none transition"
                             />
                         </div>
 
-                        <!-- Invite by email -->
+                        <!-- Invite by username -->
                         <div>
-                            <label class="mb-1.5 block text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                Invite by Email <span class="normal-case text-gray-300">(up to 2)</span>
+                            <label class="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-500">
+                                Invite Participants <span class="normal-case text-gray-300">(up to 2)</span>
                             </label>
-                            <div class="space-y-2">
-                                <input
-                                    v-model="form.invitee_emails[0]"
-                                    type="email"
-                                    placeholder="participant1@example.com"
-                                    class="block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm placeholder:text-gray-300 focus:border-gray-400 focus:bg-white focus:outline-none transition"
-                                />
-                                <input
-                                    v-model="form.invitee_emails[1]"
-                                    type="email"
-                                    placeholder="participant2@example.com (optional)"
-                                    class="block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm placeholder:text-gray-300 focus:border-gray-400 focus:bg-white focus:outline-none transition"
-                                />
+
+                            <!-- Selected chips -->
+                            <div v-if="selectedUsers.length > 0" class="mb-2 flex flex-wrap gap-1.5">
+                                <span
+                                    v-for="u in selectedUsers"
+                                    :key="u.id"
+                                    class="inline-flex items-center gap-1 rounded-full bg-gray-900 py-1 pl-3 pr-1.5 text-xs font-medium text-white"
+                                >
+                                    @{{ u.username }}
+                                    <button type="button" @click="removeUser(u.id)" class="ml-0.5 rounded-full p-0.5 hover:bg-white/20">
+                                        <X class="h-2.5 w-2.5" />
+                                    </button>
+                                </span>
                             </div>
-                            <p v-if="form.errors['invitee_emails.0']" class="mt-1 text-xs text-red-500">{{ form.errors['invitee_emails.0'] }}</p>
-                            <p v-if="form.errors['invitee_emails.1']" class="mt-1 text-xs text-red-500">{{ form.errors['invitee_emails.1'] }}</p>
+
+                            <!-- Search field -->
+                            <div v-if="selectedUsers.length < 2" class="relative">
+                                <Search class="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-300" />
+                                <input
+                                    v-model="userSearch"
+                                    type="text"
+                                    placeholder="Search by username or name…"
+                                    class="block w-full rounded-xl border border-gray-200 bg-gray-50 py-2.5 pl-8 pr-3 text-sm text-gray-900 placeholder:text-gray-300 focus:border-gray-400 focus:bg-white focus:outline-none transition"
+                                    autocomplete="off"
+                                />
+                                <!-- Results dropdown -->
+                                <ul
+                                    v-if="userResults.length > 0"
+                                    class="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-gray-100 bg-white shadow-lg"
+                                >
+                                    <li
+                                        v-for="u in userResults"
+                                        :key="u.id"
+                                        @click="selectUser(u)"
+                                        class="flex cursor-pointer items-center gap-3 px-4 py-2.5 text-sm hover:bg-gray-50"
+                                    >
+                                        <div class="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-semibold text-gray-600">
+                                            {{ u.name.charAt(0).toUpperCase() }}
+                                        </div>
+                                        <div>
+                                            <p class="font-medium text-gray-900">{{ u.name }}</p>
+                                            <p class="text-xs text-gray-400">@{{ u.username }}</p>
+                                        </div>
+                                        <UserPlus class="ml-auto h-3.5 w-3.5 text-gray-300" />
+                                    </li>
+                                </ul>
+                                <p v-else-if="userSearch.trim() && !searchLoading" class="mt-1 text-xs text-gray-400">
+                                    No users found — you can still generate an invite link after creating the session.
+                                </p>
+                            </div>
+
                             <p class="mt-2 text-xs text-gray-400">
-                                They'll receive an email link. The session starts once everyone joins.
+                                Not on AccordAI yet? Create the session first, then generate a shareable link from the session page.
                             </p>
                         </div>
 
@@ -268,7 +335,7 @@ function chatDisplayTitle(chat: Chat): string {
                                 :disabled="form.processing"
                                 class="w-full rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-gray-700 disabled:opacity-50"
                             >
-                                {{ form.processing ? 'Creating...' : 'Create & Send Invites' }}
+                                {{ form.processing ? 'Creating...' : 'Create Session' }}
                             </button>
                             <button
                                 type="button"
