@@ -68,7 +68,7 @@ class InvitationController extends Controller
      */
     public function redirectToRegister(string $token): RedirectResponse
     {
-        session(['pending_invitation_token' => $token]);
+        session(['url.intended' => route('invitations.accept', $token)]);
 
         return redirect()->route('register');
     }

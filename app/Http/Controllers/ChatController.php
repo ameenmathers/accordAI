@@ -74,6 +74,7 @@ class ChatController extends Controller
             'title' => ['nullable', 'string', 'max:255'],
             'invitee_usernames' => ['nullable', 'array', 'max:2'],
             'invitee_usernames.*' => ['string', 'max:255'],
+            'use_invite_link' => ['nullable', 'boolean'],
         ]);
 
         $invitees = collect($validated['invitee_usernames'] ?? [])
@@ -110,7 +111,18 @@ class ChatController extends Controller
             }
         }
 
-        return redirect()->route('chats.show', $chat->id);
+        // Optionally auto-generate a shareable invite link (when no usernames given)
+        $inviteUrl = null;
+        if (($validated['use_invite_link'] ?? false) && $invitees->isEmpty()) {
+            $link = ChatInvitation::create([
+                'chat_id' => $chat->id,
+                'token' => Str::uuid()->toString(),
+            ]);
+            $inviteUrl = route('invitations.show', $link->token);
+        }
+
+        return redirect()->route('chats.show', $chat->id)
+            ->with('invite_link', $inviteUrl);
     }
 
     /**
@@ -158,6 +170,7 @@ class ChatController extends Controller
                 'id' => $request->user()->id,
                 'name' => $request->user()->name,
             ],
+            'initialInviteLink' => session('invite_link'),
         ]);
     }
 
@@ -222,6 +235,10 @@ class ChatController extends Controller
             }
         }
 
+        if ($request->wantsJson()) {
+            return response()->json(['ok' => true]);
+        }
+
         return redirect()->route('chats.show', $chat->id);
     }
 
@@ -249,6 +266,38 @@ class ChatController extends Controller
 
         return redirect()->route('chats.index')
             ->with('success', 'Chat finalized. Context memory extracted.');
+    }
+
+    /**
+     * Heartbeat — records that the current user is present in this chat.
+     * POST /chats/{chat}/heartbeat
+     */
+    public function heartbeat(Request $request, Chat $chat): JsonResponse
+    {
+        if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {
+            abort(403);
+        }
+
+        Cache::put("chat_online_{$chat->id}_{$request->user()->id}", true, 35);
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Returns the IDs of participants currently online.
+     * GET /chats/{chat}/online
+     */
+    public function online(Request $request, Chat $chat): JsonResponse
+    {
+        if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {
+            abort(403);
+        }
+
+        $onlineIds = $chat->participants()->get()->pluck('id')
+            ->filter(fn ($id) => Cache::has("chat_online_{$chat->id}_{$id}"))
+            ->values();
+
+        return response()->json($onlineIds);
     }
 
     /**

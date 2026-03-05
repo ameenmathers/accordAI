@@ -3,7 +3,7 @@ import { Head, Link, useForm } from '@inertiajs/vue3';
 import { ref, watch } from 'vue';
 import AppLayout from '@/layouts/AppLayout.vue';
 import type { BreadcrumbItem } from '@/types';
-import { MessageSquare, Plus, Users, Clock, CheckCircle, Hourglass, ChevronRight, X, Sparkles, Search, UserPlus } from 'lucide-vue-next';
+import { MessageSquare, Plus, Users, Clock, CheckCircle, Hourglass, ChevronRight, X, Sparkles, Search, UserPlus, Link2 } from 'lucide-vue-next';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Participant { id: number; name: string }
@@ -32,13 +32,18 @@ const breadcrumbs: BreadcrumbItem[] = [
 // ── Create chat modal ──────────────────────────────────────────────────────
 const showCreateModal = ref(false);
 
+const useInviteLink = ref(false);
+
 const form = useForm({
     context_type: 'general',
     title: '',
     invitee_usernames: [] as string[],
+    use_invite_link: false,
 });
 
 function createChat() {
+    form.use_invite_link = useInviteLink.value;
+    if (useInviteLink.value) form.invitee_usernames = [];
     form.post('/chats', {
         onSuccess: () => {
             showCreateModal.value = false;
@@ -46,6 +51,7 @@ function createChat() {
             form.invitee_usernames = [];
             selectedUsers.value = [];
             userSearch.value = '';
+            useInviteLink.value = false;
         },
     });
 }
@@ -267,12 +273,31 @@ function chatDisplayTitle(chat: Chat): string {
                             />
                         </div>
 
-                        <!-- Invite by username -->
+                        <!-- Invite method toggle -->
                         <div>
-                            <label class="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-500">
-                                Invite Participants <span class="normal-case text-gray-300">(up to 2)</span>
-                            </label>
+                            <label class="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-500">How to invite</label>
+                            <div class="flex overflow-hidden rounded-xl border border-gray-200 text-sm">
+                                <button
+                                    type="button"
+                                    :class="['flex flex-1 items-center justify-center gap-1.5 py-2.5 font-medium transition', !useInviteLink ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50']"
+                                    @click="useInviteLink = false"
+                                >
+                                    <UserPlus class="h-3.5 w-3.5" />
+                                    By username
+                                </button>
+                                <button
+                                    type="button"
+                                    :class="['flex flex-1 items-center justify-center gap-1.5 py-2.5 font-medium transition', useInviteLink ? 'bg-gray-900 text-white' : 'bg-white text-gray-500 hover:bg-gray-50']"
+                                    @click="useInviteLink = true"
+                                >
+                                    <Link2 class="h-3.5 w-3.5" />
+                                    Shareable link
+                                </button>
+                            </div>
+                        </div>
 
+                        <!-- Invite by username -->
+                        <div v-if="!useInviteLink">
                             <!-- Selected chips -->
                             <div v-if="selectedUsers.length > 0" class="mb-2 flex flex-wrap gap-1.5">
                                 <span
@@ -297,7 +322,6 @@ function chatDisplayTitle(chat: Chat): string {
                                     class="block w-full rounded-xl border border-gray-200 bg-gray-50 py-2.5 pl-8 pr-3 text-sm text-gray-900 placeholder:text-gray-300 focus:border-gray-400 focus:bg-white focus:outline-none transition"
                                     autocomplete="off"
                                 />
-                                <!-- Results dropdown -->
                                 <ul
                                     v-if="userResults.length > 0"
                                     class="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-gray-100 bg-white shadow-lg"
@@ -319,13 +343,15 @@ function chatDisplayTitle(chat: Chat): string {
                                     </li>
                                 </ul>
                                 <p v-else-if="userSearch.trim() && !searchLoading" class="mt-1 text-xs text-gray-400">
-                                    No users found — you can still generate an invite link after creating the session.
+                                    No users found matching "{{ userSearch }}"
                                 </p>
                             </div>
+                        </div>
 
-                            <p class="mt-2 text-xs text-gray-400">
-                                Not on AccordAI yet? Create the session first, then generate a shareable link from the session page.
-                            </p>
+                        <!-- Shareable link info -->
+                        <div v-else class="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-3.5 text-sm text-gray-500">
+                            <p class="font-medium text-gray-700">A link will be generated after you create the session.</p>
+                            <p class="mt-1 text-xs">Paste it in WhatsApp, iMessage, or anywhere — the other person joins by clicking it.</p>
                         </div>
 
                         <!-- Actions -->

@@ -55,6 +55,8 @@ Route::middleware(['auth', 'verified'])->prefix('chats')->name('chats.')->group(
     Route::get('/{chat}/messages', [ChatController::class, 'pollMessages'])->name('messages.poll');
     Route::post('/{chat}/typing', [ChatController::class, 'recordTyping'])->name('typing.record');
     Route::get('/{chat}/typing', [ChatController::class, 'getTyping'])->name('typing.get');
+    Route::post('/{chat}/heartbeat', [ChatController::class, 'heartbeat'])->name('heartbeat');
+    Route::get('/{chat}/online', [ChatController::class, 'online'])->name('online');
     Route::post('/{chat}/finalize', [ChatController::class, 'finalize'])->name('finalize');
     Route::post('/{chat}/invite-link', [ChatController::class, 'generateInviteLink'])->name('invite-link');
 });
