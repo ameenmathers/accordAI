@@ -3,7 +3,7 @@ import { Head, router } from '@inertiajs/vue3';
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import AppLayout from '@/layouts/AppLayout.vue';
 import type { BreadcrumbItem } from '@/types';
-import { Send, AlertCircle, CheckCircle2, Users, Hourglass, X, Sparkles, Link2, Copy, Check } from 'lucide-vue-next';
+import { Send, AlertCircle, CheckCircle2, Users, Hourglass, X, Sparkles, Link2, Copy, Check, CheckCheck } from 'lucide-vue-next';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Sender { id: number; name: string }
@@ -33,6 +33,8 @@ const props = defineProps<{
     messages: Message[];
     currentUser: CurrentUser;
     initialInviteLink?: string | null;
+    initialReadStatus?: Record<number, number>;
+    initialSummary?: string | null;
 }>();
 
 const breadcrumbs: BreadcrumbItem[] = [
@@ -99,9 +101,15 @@ function mergeMessages(incoming: Message[]) {
 
     if (fresh.some(m => m.sender_type === 'ai')) isAiThinking.value = false;
 
-    // Play sound for AI messages and other participants' messages
-    if (fresh.some(m => m.sender_type === 'ai' || m.sender?.id !== props.currentUser.id)) {
-        playSound();
+    // Play sound + show desktop notification for incoming messages
+    for (const msg of fresh) {
+        if (msg.sender_type === 'ai') {
+            playSound();
+            showNotification('Accord', msg.content);
+        } else if (msg.sender?.id !== props.currentUser.id) {
+            playSound();
+            showNotification(msg.sender?.name ?? 'New message', msg.content);
+        }
     }
 
     localMessages.value.push(...fresh);
@@ -113,6 +121,24 @@ watch(() => props.messages, mergeMessages, { deep: true });
 
 onMounted(() => scrollToBottom(true));
 
+// ── Desktop notifications ──────────────────────────────────────────────────
+async function requestNotifyPermission() {
+    if ('Notification' in window && Notification.permission === 'default') {
+        await Notification.requestPermission();
+    }
+}
+
+function showNotification(title: string, body: string) {
+    if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+        const n = new Notification(title, {
+            body: body.slice(0, 120),
+            icon: '/favicon.ico',
+            tag: `accord-${props.chat.id}`,
+        });
+        n.onclick = () => { window.focus(); n.close(); };
+    }
+}
+
 // ── Sending messages ───────────────────────────────────────────────────────
 const messageContent = ref('');
 const isSending = ref(false);
@@ -121,11 +147,11 @@ async function sendMessage() {
     const content = messageContent.value.trim();
     if (!content || isSending.value || props.chat.status !== 'active') return;
 
-    messageContent.value = ''; // Clear immediately
+    messageContent.value = '';
     isSending.value = true;
     isAiThinking.value = true;
 
-    // Optimistic: show user's message immediately without waiting for server
+    // Optimistic: show user's message immediately
     const tempId = -Date.now();
     localMessages.value.push({
         id: tempId,
@@ -136,26 +162,76 @@ async function sendMessage() {
     });
     scrollToBottom();
 
+    // Streaming AI message state
+    const aiTempId = -(Date.now() + 1);
+    let streamingAiAdded = false;
+
     try {
         const res = await fetch(`/chats/${props.chat.id}/messages`, {
             method: 'POST',
             headers: {
                 'X-CSRF-TOKEN': getCsrf(),
-                'Accept': 'application/json',
+                'Accept': 'text/event-stream',
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({ content }),
         });
 
         if (!res.ok) {
-            // Rollback optimistic message and restore content
             localMessages.value = localMessages.value.filter(m => m.id !== tempId);
             messageContent.value = content;
             isAiThinking.value = false;
+        } else if (res.headers.get('content-type')?.includes('text/event-stream') && res.body) {
+            // Stream AI tokens token-by-token
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let aiContent = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() ?? '';
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const data = line.slice(6).trim();
+                    if (data === '[DONE]') {
+                        isAiThinking.value = false;
+                        if (streamingAiAdded) playSound();
+                        break;
+                    }
+                    try {
+                        const { token } = JSON.parse(data) as { token?: string };
+                        if (token) {
+                            aiContent += token;
+                            if (!streamingAiAdded) {
+                                // First token: add AI bubble and stop "thinking" indicator
+                                localMessages.value.push({
+                                    id: aiTempId,
+                                    sender_type: 'ai',
+                                    sender: null,
+                                    content: aiContent,
+                                    created_at: new Date().toISOString(),
+                                });
+                                streamingAiAdded = true;
+                                isAiThinking.value = false;
+                            } else {
+                                const idx = localMessages.value.findIndex(m => m.id === aiTempId);
+                                if (idx !== -1) localMessages.value[idx] = { ...localMessages.value[idx], content: aiContent };
+                            }
+                            scrollToBottom();
+                        }
+                    } catch { /* json parse — skip */ }
+                }
+            }
         }
-        // On success: next poll picks up real messages (replaces optimistic)
+        // On success: next poll confirms real message IDs (replaces optimistic temp IDs)
     } catch {
-        localMessages.value = localMessages.value.filter(m => m.id !== tempId);
+        localMessages.value = localMessages.value.filter(m => m.id !== tempId && m.id !== aiTempId);
         messageContent.value = content;
         isAiThinking.value = false;
     } finally {
@@ -176,7 +252,16 @@ async function pollMessages() {
         const res = await fetch(`/chats/${props.chat.id}/messages?after=${lastMessageId.value}`, {
             headers: { Accept: 'application/json' },
         });
-        if (res.ok) mergeMessages(await res.json());
+        if (res.ok) {
+            const data = await res.json();
+            // Handle both old (array) and new ({ messages, readStatus }) formats
+            if (Array.isArray(data)) {
+                mergeMessages(data);
+            } else {
+                mergeMessages(data.messages ?? []);
+                if (data.readStatus) readStatus.value = { ...readStatus.value, ...data.readStatus };
+            }
+        }
     } catch { /* silent */ }
 }
 
@@ -201,6 +286,18 @@ async function pollTyping() {
     } catch { /* silent */ }
 }
 
+// ── Read receipts ──────────────────────────────────────────────────────────
+// Map of userId → last message ID they've read
+const readStatus = ref<Record<number, number>>(props.initialReadStatus ?? {});
+
+// Is this message "read" by all other participants?
+function isReadByAll(message: Message): boolean {
+    if (message.sender_type !== 'user' || message.sender?.id !== props.currentUser.id) return false;
+    const others = props.chat.participants.filter(p => p.id !== props.currentUser.id);
+    if (others.length === 0) return false;
+    return others.every(p => (readStatus.value[p.id] ?? 0) >= message.id);
+}
+
 // ── Online status ──────────────────────────────────────────────────────────
 const onlineUserIds = ref<number[]>([]);
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -220,6 +317,10 @@ async function pollOnline() {
     } catch { /* silent */ }
 }
 
+// ── Session summary (shown after finalization) ──────────────────────────────
+const showSummary = ref(!!props.initialSummary);
+const sessionSummary = ref(props.initialSummary ?? '');
+
 onMounted(() => {
     if (props.chat.status !== 'finalized') {
         pollTimer = setInterval(pollMessages, 3000);
@@ -231,6 +332,9 @@ onMounted(() => {
     pollOnline();
     heartbeatTimer = setInterval(sendHeartbeat, 30000);
     onlineTimer = setInterval(pollOnline, 10000);
+
+    // Request notification permission on first mount (non-blocking)
+    requestNotifyPermission();
 });
 
 onUnmounted(() => {
@@ -448,6 +552,17 @@ function avatarColor(id: number) { return avatarColors[id % avatarColors.length]
                                 <span class="text-[11px] text-gray-400">{{ formatTime(message.created_at) }}</span>
                                 <!-- Optimistic indicator -->
                                 <span v-if="message.id < 0" class="text-[11px] text-gray-300">sending…</span>
+                                <!-- Read receipt (double tick for own messages read by all) -->
+                                <CheckCheck
+                                    v-else-if="message.sender?.id === currentUser.id && isReadByAll(message)"
+                                    class="h-3 w-3 text-blue-400"
+                                    title="Read"
+                                />
+                                <Check
+                                    v-else-if="message.sender?.id === currentUser.id && message.id > 0"
+                                    class="h-3 w-3 text-gray-300"
+                                    title="Delivered"
+                                />
                             </div>
                             <div
                                 :class="[
@@ -578,6 +693,39 @@ function avatarColor(id: number) { return avatarColors[id % avatarColors.length]
                             Cancel
                         </button>
                     </div>
+                </div>
+            </div>
+        </Teleport>
+
+        <!-- ── Session summary modal (shown after finalization) ─────────── -->
+        <Teleport to="body">
+            <div
+                v-if="showSummary && sessionSummary"
+                class="fixed inset-0 z-50 flex items-end justify-center bg-black/30 p-4 backdrop-blur-sm sm:items-center"
+            >
+                <div class="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+                    <div class="flex items-start justify-between">
+                        <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl bg-emerald-100">
+                            <CheckCircle2 class="h-5 w-5 text-emerald-600" />
+                        </div>
+                        <button @click="showSummary = false" class="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600">
+                            <X class="h-4 w-4" />
+                        </button>
+                    </div>
+                    <h2 class="mt-4 text-base font-semibold text-gray-900">Session Summary</h2>
+                    <p class="mt-0.5 text-xs text-gray-400 capitalize">{{ chat.context_type }} session · {{ chat.title ?? 'Untitled' }}</p>
+                    <div class="mt-4 rounded-2xl bg-gray-50 px-5 py-4">
+                        <p class="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">{{ sessionSummary }}</p>
+                    </div>
+                    <p class="mt-3 text-xs text-gray-400">
+                        Accord has extracted behavioral insights from this session to improve future mediation.
+                    </p>
+                    <button
+                        @click="showSummary = false"
+                        class="mt-5 w-full rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-gray-700"
+                    >
+                        Done
+                    </button>
                 </div>
             </div>
         </Teleport>

@@ -35,6 +35,86 @@ class AiReasoningService
     ) {}
 
     /**
+     * Generate a warm, readable summary of a finalized session.
+     * Covers what was discussed, what each person expressed, and any agreed next steps.
+     */
+    public function generateSummary(Chat $chat): string
+    {
+        $context = $this->contextBuilder->buildForMemoryExtraction($chat);
+        $names = implode(' and ', array_column($context['participants'], 'name'));
+
+        if (empty(trim($context['transcript'] ?? ''))) {
+            return '';
+        }
+
+        $response = OpenAI::chat()->create([
+            'model' => 'gpt-4o',
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => 'You write warm, constructive summaries of mediation sessions. Be concise — 2–3 short paragraphs.',
+                ],
+                [
+                    'role' => 'user',
+                    'content' => "Summarize this mediation session between {$names}.\n\nCover:\n- What the session was about\n- What each person expressed\n- Any agreements or next steps suggested by Accord\n\nKeep it positive and forward-looking.\n\n{$context['transcript']}",
+                ],
+            ],
+            'max_tokens' => 350,
+            'temperature' => 0.7,
+        ]);
+
+        return trim($response->choices[0]->message->content ?? '');
+    }
+
+    /**
+     * Stream a mediation response token-by-token via a callback, then persist the complete message.
+     * Use inside Laravel's response()->stream() for real-time AI output.
+     */
+    public function mediateStreaming(Chat $chat, \Closure $onToken): void
+    {
+        $context = $this->contextBuilder->build($chat);
+        $participantNames = array_column($context['participants'], 'name');
+
+        $systemPrompt = $this->getMediatorSystemPrompt($chat->context_type, $participantNames)
+            . $this->getEvidenceFrameworks($chat->context_type);
+
+        $userMessage = $this->buildMediationUserMessage(
+            $context['participants'],
+            $context['messages'],
+            $context['context_notes'],
+            $context['participation_stats']
+        );
+
+        $stream = OpenAI::chat()->createStreamed([
+            'model' => 'gpt-4o',
+            'messages' => [
+                ['role' => 'system', 'content' => $systemPrompt],
+                ['role' => 'user', 'content' => $userMessage],
+            ],
+            'max_tokens' => 200,
+            'temperature' => 0.85,
+        ]);
+
+        $fullContent = '';
+        foreach ($stream as $response) {
+            $token = $response->choices[0]->delta->content ?? '';
+            if ($token !== '') {
+                $fullContent .= $token;
+                $onToken($token);
+            }
+        }
+
+        if ($fullContent !== '') {
+            Message::create([
+                'chat_id' => $chat->id,
+                'sender_type' => 'ai',
+                'sender_id' => null,
+                'content' => $fullContent,
+            ]);
+        }
+    }
+
+    /**
      * Generate and persist an AI mediation response.
      *
      * @throws Exception if OpenAI call fails

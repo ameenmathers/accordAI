@@ -1,0 +1,31 @@
+{
+    "name": "AccordAI",
+    "short_name": "Accord",
+    "description": "AI-guided mediation sessions between people",
+    "start_url": "/dashboard",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#111827",
+    "orientation": "portrait-primary",
+    "icons": [
+        {
+            "src": "/favicon.ico",
+            "sizes": "48x48",
+            "type": "image/x-icon"
+        },
+        {
+            "src": "/apple-touch-icon.png",
+            "sizes": "180x180",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "New Session",
+            "url": "/chats",
+            "description": "Start a new mediation session"
+        }
+    ],
+    "categories": ["productivity", "social"]
+}

@@ -57,9 +57,17 @@ class ChatController extends Controller
                 'updated_at' => $chat->updated_at,
             ]);
 
+        // Collect all participant IDs from the user's chats, check global online status
+        $onlineUserIds = $chats
+            ->flatMap(fn ($c) => collect($c['participants'])->pluck('id'))
+            ->unique()
+            ->filter(fn ($id) => Cache::has("user_online_{$id}"))
+            ->values();
+
         return Inertia::render('chat/Index', [
             'chats' => $chats,
             'contextTypes' => $this->getContextTypes(),
+            'onlineUserIds' => $onlineUserIds,
         ]);
     }
 
@@ -150,6 +158,16 @@ class ChatController extends Controller
 
         $chat->load(['creator:id,name', 'participants:id,name', 'pendingInvitations.invitedUser:id,name,username']);
 
+        // Mark current user as having read all messages on page load
+        $userId = $request->user()->id;
+        if ($messages->isNotEmpty()) {
+            Cache::put("chat_read_{$chat->id}_{$userId}", $messages->last()['id'], 86400);
+        }
+
+        $readStatus = $chat->participants->pluck('id')
+            ->mapWithKeys(fn ($pid) => [$pid => Cache::get("chat_read_{$chat->id}_{$pid}", 0)])
+            ->all();
+
         return Inertia::render('chat/Show', [
             'chat' => [
                 'id' => $chat->id,
@@ -171,6 +189,8 @@ class ChatController extends Controller
                 'name' => $request->user()->name,
             ],
             'initialInviteLink' => session('invite_link'),
+            'initialReadStatus' => $readStatus,
+            'initialSummary' => session('session_summary'),
         ]);
     }
 
@@ -202,7 +222,7 @@ class ChatController extends Controller
      * Send a message and trigger AI mediation.
      * POST /chats/{chat}/messages
      */
-    public function sendMessage(Request $request, Chat $chat): RedirectResponse
+    public function sendMessage(Request $request, Chat $chat): RedirectResponse|JsonResponse
     {
         if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {
             abort(403);
@@ -227,7 +247,50 @@ class ChatController extends Controller
             'content' => $validated['content'],
         ]);
 
-        if ($this->shouldAiRespond($validated['content'])) {
+        // Auto-extract insights every 20 user messages (threshold-based memory)
+        $userMessageCount = $chat->messages()->where('sender_type', 'user')->count();
+        if ($userMessageCount > 0 && $userMessageCount % 20 === 0) {
+            try {
+                $this->aiMemoryService->extractAndStoreMemory($chat);
+            } catch (\Exception) {
+                // Non-fatal
+            }
+        }
+
+        $shouldRespond = $this->shouldAiRespond($validated['content']);
+
+        // Streaming path: client sends Accept: text/event-stream → stream tokens in real time
+        // (skips the synchronous mediate() call — mediateStreaming() saves the message itself)
+        if ($request->header('Accept') === 'text/event-stream') {
+            $aiReasoningService = $this->aiReasoningService;
+
+            return response()->stream(function () use ($chat, $shouldRespond, $aiReasoningService) {
+                while (ob_get_level() > 0) {
+                    ob_end_clean();
+                }
+
+                if ($shouldRespond) {
+                    try {
+                        $aiReasoningService->mediateStreaming($chat, function ($token) {
+                            echo 'data: '.json_encode(['token' => $token])."\n\n";
+                            flush();
+                        });
+                    } catch (\Exception) {
+                        // Non-fatal — client will see [DONE] and poll for the message
+                    }
+                }
+
+                echo "data: [DONE]\n\n";
+                flush();
+            }, 200, [
+                'Content-Type' => 'text/event-stream',
+                'Cache-Control' => 'no-cache',
+                'X-Accel-Buffering' => 'no',
+            ]);
+        }
+
+        // Non-streaming fallback: call mediate() synchronously
+        if ($shouldRespond) {
             try {
                 $this->aiReasoningService->mediate($chat);
             } catch (\Exception $e) {
@@ -264,8 +327,15 @@ class ChatController extends Controller
             // Memory extraction failed but finalization succeeded
         }
 
-        return redirect()->route('chats.index')
-            ->with('success', 'Chat finalized. Context memory extracted.');
+        $summary = '';
+        try {
+            $summary = $this->aiReasoningService->generateSummary($chat);
+        } catch (\Exception $e) {
+            // Non-fatal — finalization still succeeded
+        }
+
+        return redirect()->route('chats.show', $chat->id)
+            ->with('session_summary', $summary);
     }
 
     /**
@@ -278,7 +348,9 @@ class ChatController extends Controller
             abort(403);
         }
 
-        Cache::put("chat_online_{$chat->id}_{$request->user()->id}", true, 35);
+        $userId = $request->user()->id;
+        Cache::put("chat_online_{$chat->id}_{$userId}", true, 35);
+        Cache::put("user_online_{$userId}", true, 35); // global — used by chat list
 
         return response()->json(['ok' => true]);
     }
@@ -311,6 +383,7 @@ class ChatController extends Controller
         }
 
         $afterId = (int) $request->query('after', 0);
+        $userId = $request->user()->id;
 
         $messages = $chat->messages()
             ->with('sender:id,name')
@@ -325,7 +398,17 @@ class ChatController extends Controller
                 'created_at' => $msg->created_at->toISOString(),
             ]);
 
-        return response()->json($messages);
+        // Auto mark-read: user is actively polling = they're looking at the chat
+        if ($messages->isNotEmpty()) {
+            Cache::put("chat_read_{$chat->id}_{$userId}", $messages->last()['id'], 86400);
+        }
+
+        // Read status for all participants (last message ID each has read)
+        $readStatus = $chat->participants()->pluck('id')
+            ->mapWithKeys(fn ($pid) => [$pid => Cache::get("chat_read_{$chat->id}_{$pid}", 0)])
+            ->all();
+
+        return response()->json(['messages' => $messages, 'readStatus' => $readStatus]);
     }
 
     /**

@@ -22,7 +22,7 @@ interface Chat {
 interface ContextType { value: string; label: string }
 interface UserResult { id: number; name: string; username: string }
 
-const props = defineProps<{ chats: Chat[]; contextTypes: ContextType[] }>();
+const props = defineProps<{ chats: Chat[]; contextTypes: ContextType[]; onlineUserIds?: number[] }>();
 
 const breadcrumbs: BreadcrumbItem[] = [
     { title: 'Dashboard', href: '/dashboard' },
@@ -196,14 +196,16 @@ function chatDisplayTitle(chat: Chat): string {
                                     </span>
                                 </div>
 
-                                <div class="mt-0.5 flex items-center gap-1 text-xs text-gray-400">
-                                    <Users class="h-3 w-3 flex-shrink-0" />
-                                    <span class="truncate">
-                                        {{ chat.participants.map(p => p.name).join(', ') }}
-                                        <template v-if="chat.pending_invitations.length">
-                                            · <span class="text-amber-500">{{ chat.pending_invitations.map(i => i.display).join(', ') }} invited</span>
-                                        </template>
+                                <div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-gray-400">
+                                    <span v-for="p in chat.participants" :key="p.id" class="flex items-center gap-1">
+                                        <span
+                                            :class="['h-1.5 w-1.5 flex-shrink-0 rounded-full transition-colors', (onlineUserIds ?? []).includes(p.id) ? 'bg-emerald-400' : 'bg-gray-200']"
+                                        />
+                                        {{ p.name }}
                                     </span>
+                                    <template v-if="chat.pending_invitations.length">
+                                        <span class="text-amber-500">· {{ chat.pending_invitations.map(i => i.display).join(', ') }} invited</span>
+                                    </template>
                                 </div>
                             </div>
 
