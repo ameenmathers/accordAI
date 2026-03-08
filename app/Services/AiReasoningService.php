@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Events\MessageSent;
 use App\Models\Chat;
 use App\Models\Message;
 use App\Traits\UsesAiPrompts;
@@ -31,7 +32,8 @@ class AiReasoningService
     use UsesAiPrompts, UsesEvidenceRules;
 
     public function __construct(
-        private readonly ChatContextBuilder $contextBuilder
+        private readonly ChatContextBuilder $contextBuilder,
+        private readonly WebPushService $webPushService,
     ) {}
 
     /**
@@ -105,12 +107,31 @@ class AiReasoningService
         }
 
         if ($fullContent !== '') {
-            Message::create([
+            $aiMessage = Message::create([
                 'chat_id' => $chat->id,
                 'sender_type' => 'ai',
                 'sender_id' => null,
                 'content' => $fullContent,
             ]);
+
+            broadcast(new MessageSent($chat->id, [
+                'id' => $aiMessage->id,
+                'sender_type' => 'ai',
+                'sender' => null,
+                'content' => $fullContent,
+                'created_at' => $aiMessage->created_at->toISOString(),
+            ]));
+
+            // Background push to all participants (for those not currently online)
+            $participantIds = $chat->participants()->pluck('users.id')->toArray();
+            try {
+                $this->webPushService->sendToUsers(
+                    $participantIds,
+                    'Accord',
+                    mb_substr($fullContent, 0, 120),
+                    ['url' => '/chats/'.$chat->id]
+                );
+            } catch (\Exception) { /* non-fatal */ }
         }
     }
 
@@ -152,11 +173,32 @@ class AiReasoningService
 
         $aiContent = $response->choices[0]->message->content;
 
-        return Message::create([
+        $aiMessage = Message::create([
             'chat_id' => $chat->id,
             'sender_type' => 'ai',
             'sender_id' => null,
             'content' => $aiContent,
         ]);
+
+        broadcast(new MessageSent($chat->id, [
+            'id' => $aiMessage->id,
+            'sender_type' => 'ai',
+            'sender' => null,
+            'content' => $aiContent,
+            'created_at' => $aiMessage->created_at->toISOString(),
+        ]));
+
+        // Background push to all participants
+        $participantIds = $chat->participants()->pluck('users.id')->toArray();
+        try {
+            $this->webPushService->sendToUsers(
+                $participantIds,
+                'Accord',
+                mb_substr($aiContent, 0, 120),
+                ['url' => '/chats/'.$chat->id]
+            );
+        } catch (\Exception) { /* non-fatal */ }
+
+        return $aiMessage;
     }
 }

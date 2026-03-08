@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\InvitationController;
+use App\Http\Controllers\PushController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -85,6 +86,12 @@ Route::prefix('invitations')->name('invitations.')->group(function () {
         Route::post('/{invitation}/decline', [InvitationController::class, 'declineById'])
             ->name('decline-by-id');
     });
+});
+
+// ── Web Push ───────────────────────────────────────────────────────────────
+Route::middleware(['auth'])->prefix('push')->name('push.')->group(function () {
+    Route::post('/subscribe', [PushController::class, 'subscribe'])->name('subscribe');
+    Route::post('/unsubscribe', [PushController::class, 'unsubscribe'])->name('unsubscribe');
 });
 
 require __DIR__.'/settings.php';

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\ParticipantJoined;
 use App\Models\ChatInvitation;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -155,11 +156,17 @@ class InvitationController extends Controller
     {
         $chat = $invitation->chat;
 
-        if (! $chat->participants()->where('user_id', auth()->id())->exists()) {
+        $isNew = ! $chat->participants()->where('user_id', auth()->id())->exists();
+
+        if ($isNew) {
             $chat->participants()->attach(auth()->id());
         }
 
         $invitation->update(['accepted_at' => now()]);
+
+        if ($isNew) {
+            broadcast(new ParticipantJoined($chat->id, auth()->id(), auth()->user()->name));
+        }
 
         if ($chat->pendingInvitations()->count() === 0 && $chat->isWaiting()) {
             $chat->update(['status' => 'active']);

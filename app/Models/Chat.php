@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Chat extends Model
 {
@@ -28,12 +29,18 @@ class Chat extends Model
     public function participants(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'chat_participants')
+            ->withPivot('last_read_message_id')
             ->withTimestamps();
     }
 
     public function messages(): HasMany
     {
         return $this->hasMany(Message::class)->orderBy('created_at');
+    }
+
+    public function latestMessage(): HasOne
+    {
+        return $this->hasOne(Message::class)->latestOfMany();
     }
 
     // Pending and accepted invitations for this chat

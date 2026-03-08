@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Events\MessageSent;
 use App\Mail\ChatInvitationMail;
 use App\Models\Chat;
 use App\Models\ChatInvitation;
@@ -34,28 +35,50 @@ class ChatController extends Controller
      */
     public function index(Request $request): Response
     {
+        $userId = $request->user()->id;
+
         $chats = $request->user()
             ->chats()
-            ->with(['creator:id,name', 'participants:id,name', 'pendingInvitations.invitedUser:id,name,username'])
+            ->with([
+                'creator:id,name',
+                'participants:id,name',
+                'participants' => fn ($q) => $q->withPivot('last_read_message_id'),
+                'pendingInvitations.invitedUser:id,name,username',
+                'latestMessage',
+            ])
             ->withCount('messages')
             ->latest()
             ->get()
-            ->map(fn ($chat) => [
-                'id' => $chat->id,
-                'context_type' => $chat->context_type,
-                'title' => $chat->title,
-                'status' => $chat->status,
-                'created_by' => $chat->creator?->only(['id', 'name']),
-                'participants' => $chat->participants->map->only(['id', 'name'])->values(),
-                'pending_invitations' => $chat->pendingInvitations->map(fn ($inv) => [
-                    'id' => $inv->id,
-                    'display' => $inv->invitedUser
-                        ? '@'.$inv->invitedUser->username
-                        : ($inv->invited_email ?? 'via link'),
-                ])->values(),
-                'messages_count' => $chat->messages_count,
-                'updated_at' => $chat->updated_at,
-            ]);
+            ->map(function ($chat) use ($userId) {
+                $latestMsgId = $chat->latestMessage?->id ?? 0;
+                $myPivot = $chat->participants->firstWhere('id', $userId);
+                $myLastRead = $myPivot?->pivot?->last_read_message_id ?? 0;
+                $unreadCount = $myLastRead < $latestMsgId
+                    ? $chat->messages()->where('id', '>', $myLastRead)->where('sender_id', '!=', $userId)->count()
+                    : 0;
+
+                return [
+                    'id' => $chat->id,
+                    'context_type' => $chat->context_type,
+                    'title' => $chat->title,
+                    'status' => $chat->status,
+                    'created_by' => $chat->creator?->only(['id', 'name']),
+                    'participants' => $chat->participants->map->only(['id', 'name'])->values(),
+                    'pending_invitations' => $chat->pendingInvitations->map(fn ($inv) => [
+                        'id' => $inv->id,
+                        'display' => $inv->invitedUser
+                            ? '@'.$inv->invitedUser->username
+                            : ($inv->invited_email ?? 'via link'),
+                    ])->values(),
+                    'messages_count' => $chat->messages_count,
+                    'unread_count' => $unreadCount,
+                    'last_message' => $chat->latestMessage ? [
+                        'content' => $chat->latestMessage->content,
+                        'sender_type' => $chat->latestMessage->sender_type,
+                    ] : null,
+                    'updated_at' => $chat->updated_at,
+                ];
+            });
 
         // Collect all participant IDs from the user's chats, check global online status
         $onlineUserIds = $chats
@@ -161,7 +184,9 @@ class ChatController extends Controller
         // Mark current user as having read all messages on page load
         $userId = $request->user()->id;
         if ($messages->isNotEmpty()) {
-            Cache::put("chat_read_{$chat->id}_{$userId}", $messages->last()['id'], 86400);
+            $lastId = $messages->last()['id'];
+            Cache::put("chat_read_{$chat->id}_{$userId}", $lastId, 86400);
+            $chat->participants()->updateExistingPivot($userId, ['last_read_message_id' => $lastId]);
         }
 
         $readStatus = $chat->participants->pluck('id')
@@ -191,6 +216,7 @@ class ChatController extends Controller
             'initialInviteLink' => session('invite_link'),
             'initialReadStatus' => $readStatus,
             'initialSummary' => session('session_summary'),
+            'vapidPublicKey' => env('VAPID_PUBLIC_KEY'),
         ]);
     }
 
@@ -240,12 +266,20 @@ class ChatController extends Controller
             'content' => ['required', 'string', 'max:5000'],
         ]);
 
-        Message::create([
+        $userMessage = Message::create([
             'chat_id' => $chat->id,
             'sender_type' => 'user',
             'sender_id' => $request->user()->id,
             'content' => $validated['content'],
         ]);
+
+        broadcast(new MessageSent($chat->id, [
+            'id' => $userMessage->id,
+            'sender_type' => 'user',
+            'sender' => ['id' => $request->user()->id, 'name' => $request->user()->name],
+            'content' => $userMessage->content,
+            'created_at' => $userMessage->created_at->toISOString(),
+        ]))->toOthers();
 
         // Auto-extract insights every 20 user messages (threshold-based memory)
         $userMessageCount = $chat->messages()->where('sender_type', 'user')->count();
@@ -400,7 +434,9 @@ class ChatController extends Controller
 
         // Auto mark-read: user is actively polling = they're looking at the chat
         if ($messages->isNotEmpty()) {
-            Cache::put("chat_read_{$chat->id}_{$userId}", $messages->last()['id'], 86400);
+            $lastId = $messages->last()['id'];
+            Cache::put("chat_read_{$chat->id}_{$userId}", $lastId, 86400);
+            $chat->participants()->updateExistingPivot($userId, ['last_read_message_id' => $lastId]);
         }
 
         // Read status for all participants (last message ID each has read)

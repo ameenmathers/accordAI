@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { Head, Link, useForm } from '@inertiajs/vue3';
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 import AppLayout from '@/layouts/AppLayout.vue';
 import type { BreadcrumbItem } from '@/types';
-import { MessageSquare, Plus, Users, Clock, CheckCircle, Hourglass, ChevronRight, X, Sparkles, Search, UserPlus, Link2 } from 'lucide-vue-next';
+import { MessageSquare, Plus, Clock, CheckCircle, Hourglass, ChevronRight, X, Sparkles, Search, UserPlus, Link2 } from 'lucide-vue-next';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Participant { id: number; name: string }
 interface PendingInvitation { id: number; display: string }
+interface LastMessage { content: string; sender_type: 'user' | 'ai' }
 interface Chat {
     id: number;
     context_type: string;
@@ -17,6 +18,8 @@ interface Chat {
     participants: Participant[];
     pending_invitations: PendingInvitation[];
     messages_count: number;
+    unread_count: number;
+    last_message: LastMessage | null;
     updated_at: string;
 }
 interface ContextType { value: string; label: string }
@@ -29,6 +32,18 @@ const breadcrumbs: BreadcrumbItem[] = [
     { title: 'Chats', href: '/chats' },
 ];
 
+// ── Session search ─────────────────────────────────────────────────────────
+const searchQuery = ref('');
+const filteredChats = computed(() => {
+    const q = searchQuery.value.trim().toLowerCase();
+    if (!q) return props.chats;
+    return props.chats.filter(c =>
+        (c.title ?? '').toLowerCase().includes(q) ||
+        c.context_type.toLowerCase().includes(q) ||
+        c.participants.some(p => p.name.toLowerCase().includes(q))
+    );
+});
+
 // ── Create chat modal ──────────────────────────────────────────────────────
 const showCreateModal = ref(false);
 
@@ -40,6 +55,19 @@ const form = useForm({
     invitee_usernames: [] as string[],
     use_invite_link: false,
 });
+
+// ── Session templates ──────────────────────────────────────────────────────
+const templates: { label: string; emoji: string; context_type: string; title: string }[] = [
+    { label: 'Budget talk', emoji: '💰', context_type: 'financial', title: 'Budget planning discussion' },
+    { label: 'Work conflict', emoji: '💼', context_type: 'business', title: 'Team conflict resolution' },
+    { label: 'Relationship', emoji: '❤️', context_type: 'relationship', title: 'Relationship discussion' },
+    { label: 'Family issue', emoji: '🏠', context_type: 'family', title: 'Family conflict' },
+];
+
+function applyTemplate(t: typeof templates[0]) {
+    form.context_type = t.context_type;
+    form.title = t.title;
+}
 
 function createChat() {
     form.use_invite_link = useInviteLink.value;
@@ -113,6 +141,10 @@ function formatDate(dateStr: string) {
 function chatDisplayTitle(chat: Chat): string {
     return chat.title || `${chat.context_type.charAt(0).toUpperCase() + chat.context_type.slice(1)} Discussion`;
 }
+
+function truncate(text: string, max = 55): string {
+    return text.length > max ? text.slice(0, max) + '…' : text;
+}
 </script>
 
 <template>
@@ -122,18 +154,31 @@ function chatDisplayTitle(chat: Chat): string {
         <div class="flex h-full flex-col bg-white">
 
             <!-- ── Page header ──────────────────────────────────────────── -->
-            <div class="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-                <div>
-                    <h1 class="text-lg font-semibold text-gray-900">Mediation Sessions</h1>
-                    <p class="mt-0.5 text-sm text-gray-400">AI-guided conversations between 2–3 participants.</p>
+            <div class="border-b border-gray-100 px-6 py-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h1 class="text-lg font-semibold text-gray-900">Mediation Sessions</h1>
+                        <p class="mt-0.5 text-sm text-gray-400">AI-guided conversations between 2–3 participants.</p>
+                    </div>
+                    <button
+                        @click="showCreateModal = true"
+                        class="inline-flex items-center gap-2 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-gray-700"
+                    >
+                        <Plus class="h-4 w-4" />
+                        New Session
+                    </button>
                 </div>
-                <button
-                    @click="showCreateModal = true"
-                    class="inline-flex items-center gap-2 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-gray-700"
-                >
-                    <Plus class="h-4 w-4" />
-                    New Session
-                </button>
+
+                <!-- Search bar -->
+                <div v-if="chats.length > 0" class="relative mt-3">
+                    <Search class="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-300" />
+                    <input
+                        v-model="searchQuery"
+                        type="text"
+                        placeholder="Search sessions…"
+                        class="block w-full rounded-xl border border-gray-200 bg-gray-50 py-2 pl-8 pr-3 text-sm text-gray-900 placeholder:text-gray-300 focus:border-gray-300 focus:bg-white focus:outline-none transition"
+                    />
+                </div>
             </div>
 
             <!-- ── Chat list ────────────────────────────────────────────── -->
@@ -157,20 +202,35 @@ function chatDisplayTitle(chat: Chat): string {
                     </button>
                 </div>
 
+                <!-- No search results -->
+                <div v-else-if="filteredChats.length === 0" class="flex flex-col items-center justify-center py-16 text-center">
+                    <p class="text-sm text-gray-400">No sessions match "{{ searchQuery }}"</p>
+                    <button @click="searchQuery = ''" class="mt-2 text-xs text-gray-500 underline underline-offset-2">Clear search</button>
+                </div>
+
                 <!-- List -->
                 <ul v-else class="divide-y divide-gray-50 px-4 py-3 sm:px-6">
-                    <li v-for="chat in chats" :key="chat.id" class="group">
+                    <li v-for="chat in filteredChats" :key="chat.id" class="group">
                         <Link
                             :href="`/chats/${chat.id}`"
                             class="flex items-center gap-4 rounded-2xl px-4 py-4 transition hover:bg-gray-50"
                         >
-                            <div :class="['flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl', contextStyle(chat.context_type).bg]">
-                                <MessageSquare :class="['h-5 w-5', contextStyle(chat.context_type).text]" />
+                            <!-- Context icon + unread badge -->
+                            <div class="relative flex-shrink-0">
+                                <div :class="['flex h-11 w-11 items-center justify-center rounded-2xl', contextStyle(chat.context_type).bg]">
+                                    <MessageSquare :class="['h-5 w-5', contextStyle(chat.context_type).text]" />
+                                </div>
+                                <span
+                                    v-if="chat.unread_count > 0"
+                                    class="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-gray-900 px-1 text-[10px] font-bold text-white"
+                                >
+                                    {{ chat.unread_count > 9 ? '9+' : chat.unread_count }}
+                                </span>
                             </div>
 
                             <div class="min-w-0 flex-1">
                                 <div class="flex items-center gap-2">
-                                    <span class="truncate text-sm font-semibold text-gray-900">
+                                    <span :class="['truncate text-sm font-semibold', chat.unread_count > 0 ? 'text-gray-900' : 'text-gray-700']">
                                         {{ chatDisplayTitle(chat) }}
                                     </span>
                                     <span
@@ -196,7 +256,13 @@ function chatDisplayTitle(chat: Chat): string {
                                     </span>
                                 </div>
 
-                                <div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-gray-400">
+                                <!-- Last message preview -->
+                                <p v-if="chat.last_message" class="mt-0.5 truncate text-xs text-gray-400">
+                                    <span v-if="chat.last_message.sender_type === 'ai'" class="font-medium text-gray-500">Accord: </span>
+                                    {{ truncate(chat.last_message.content) }}
+                                </p>
+
+                                <div v-else class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-gray-400">
                                     <span v-for="p in chat.participants" :key="p.id" class="flex items-center gap-1">
                                         <span
                                             :class="['h-1.5 w-1.5 flex-shrink-0 rounded-full transition-colors', (onlineUserIds ?? []).includes(p.id) ? 'bg-emerald-400' : 'bg-gray-200']"
@@ -247,6 +313,27 @@ function chatDisplayTitle(chat: Chat): string {
                     <p class="mt-1 text-sm text-gray-400">
                         Search for participants by username. They'll see the invite on their dashboard.
                     </p>
+
+                    <!-- Quick start templates -->
+                    <div class="mt-4">
+                        <p class="mb-2 text-xs font-medium uppercase tracking-wide text-gray-400">Quick start</p>
+                        <div class="flex flex-wrap gap-2">
+                            <button
+                                v-for="t in templates"
+                                :key="t.label"
+                                type="button"
+                                @click="applyTemplate(t)"
+                                :class="[
+                                    'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition',
+                                    form.context_type === t.context_type && form.title === t.title
+                                        ? 'border-gray-900 bg-gray-900 text-white'
+                                        : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+                                ]"
+                            >
+                                {{ t.emoji }} {{ t.label }}
+                            </button>
+                        </div>
+                    </div>
 
                     <form @submit.prevent="createChat" class="mt-5 space-y-4">
 
