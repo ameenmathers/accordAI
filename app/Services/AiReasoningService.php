@@ -114,13 +114,15 @@ class AiReasoningService
                 'content' => $fullContent,
             ]);
 
-            broadcast(new MessageSent($chat->id, [
-                'id' => $aiMessage->id,
-                'sender_type' => 'ai',
-                'sender' => null,
-                'content' => $fullContent,
-                'created_at' => $aiMessage->created_at->toISOString(),
-            ]));
+            try {
+                broadcast(new MessageSent($chat->id, [
+                    'id' => $aiMessage->id,
+                    'sender_type' => 'ai',
+                    'sender' => null,
+                    'content' => $fullContent,
+                    'created_at' => $aiMessage->created_at->toISOString(),
+                ]));
+            } catch (\Exception) { /* non-fatal: Reverb may not be running */ }
 
             // Background push to all participants (for those not currently online)
             $participantIds = $chat->participants()->pluck('users.id')->toArray();
@@ -180,13 +182,15 @@ class AiReasoningService
             'content' => $aiContent,
         ]);
 
-        broadcast(new MessageSent($chat->id, [
-            'id' => $aiMessage->id,
-            'sender_type' => 'ai',
-            'sender' => null,
-            'content' => $aiContent,
-            'created_at' => $aiMessage->created_at->toISOString(),
-        ]));
+        try {
+            broadcast(new MessageSent($chat->id, [
+                'id' => $aiMessage->id,
+                'sender_type' => 'ai',
+                'sender' => null,
+                'content' => $aiContent,
+                'created_at' => $aiMessage->created_at->toISOString(),
+            ]));
+        } catch (\Exception) { /* non-fatal: Reverb may not be running */ }
 
         // Background push to all participants
         $participantIds = $chat->participants()->pluck('users.id')->toArray();

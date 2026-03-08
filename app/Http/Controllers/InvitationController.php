@@ -165,7 +165,9 @@ class InvitationController extends Controller
         $invitation->update(['accepted_at' => now()]);
 
         if ($isNew) {
-            broadcast(new ParticipantJoined($chat->id, auth()->id(), auth()->user()->name));
+            try {
+                broadcast(new ParticipantJoined($chat->id, auth()->id(), auth()->user()->name));
+            } catch (\Exception) { /* non-fatal: Reverb may not be running */ }
         }
 
         if ($chat->pendingInvitations()->count() === 0 && $chat->isWaiting()) {

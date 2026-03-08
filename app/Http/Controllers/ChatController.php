@@ -14,6 +14,7 @@ use App\Traits\UsesEvidenceRules;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
@@ -248,7 +249,7 @@ class ChatController extends Controller
      * Send a message and trigger AI mediation.
      * POST /chats/{chat}/messages
      */
-    public function sendMessage(Request $request, Chat $chat): RedirectResponse|JsonResponse
+    public function sendMessage(Request $request, Chat $chat): StreamedResponse|RedirectResponse|JsonResponse
     {
         if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {
             abort(403);
@@ -273,13 +274,15 @@ class ChatController extends Controller
             'content' => $validated['content'],
         ]);
 
-        broadcast(new MessageSent($chat->id, [
-            'id' => $userMessage->id,
-            'sender_type' => 'user',
-            'sender' => ['id' => $request->user()->id, 'name' => $request->user()->name],
-            'content' => $userMessage->content,
-            'created_at' => $userMessage->created_at->toISOString(),
-        ]))->toOthers();
+        try {
+            broadcast(new MessageSent($chat->id, [
+                'id' => $userMessage->id,
+                'sender_type' => 'user',
+                'sender' => ['id' => $request->user()->id, 'name' => $request->user()->name],
+                'content' => $userMessage->content,
+                'created_at' => $userMessage->created_at->toISOString(),
+            ]))->toOthers();
+        } catch (\Exception) { /* non-fatal: Reverb may not be running */ }
 
         // Auto-extract insights every 20 user messages (threshold-based memory)
         $userMessageCount = $chat->messages()->where('sender_type', 'user')->count();
@@ -440,7 +443,7 @@ class ChatController extends Controller
         }
 
         // Read status for all participants (last message ID each has read)
-        $readStatus = $chat->participants()->pluck('id')
+        $readStatus = $chat->participants()->pluck('users.id')
             ->mapWithKeys(fn ($pid) => [$pid => Cache::get("chat_read_{$chat->id}_{$pid}", 0)])
             ->all();
 

@@ -69,6 +69,10 @@ function playSound() {
     } catch { /* silent */ }
 }
 
+// ── Local chat status (mirrors props.chat but can update via Echo before Inertia reload) ──
+const localChatStatus = ref(props.chat.status);
+watch(() => props.chat.status, (s) => { localChatStatus.value = s; });
+
 // ── Local message state ─────────────────────────────────────────────────────
 const localMessages = ref<Message[]>([...props.messages]);
 const messagesEndRef = ref<HTMLDivElement | null>(null);
@@ -94,12 +98,19 @@ function mergeMessages(incoming: Message[]) {
     const fresh = incoming.filter(m => !existingRealIds.has(m.id));
     if (!fresh.length) return;
 
-    // Replace optimistic messages (negative IDs) with their real counterparts
-    for (const real of fresh.filter(m => m.sender?.id === props.currentUser.id)) {
-        const idx = localMessages.value.findIndex(
-            m => m.id < 0 && m.content === real.content && m.sender?.id === real.sender?.id
-        );
-        if (idx !== -1) localMessages.value.splice(idx, 1);
+    // Replace optimistic/streaming messages (negative IDs) with their real counterparts
+    for (const real of fresh) {
+        if (real.sender_type === 'user' && real.sender?.id === props.currentUser.id) {
+            // Replace user's own optimistic bubble (matched by content)
+            const idx = localMessages.value.findIndex(
+                m => m.id < 0 && m.sender_type === 'user' && m.content === real.content && m.sender?.id === real.sender?.id
+            );
+            if (idx !== -1) localMessages.value.splice(idx, 1);
+        } else if (real.sender_type === 'ai') {
+            // Replace streaming AI bubble (any negative-ID ai message)
+            const idx = localMessages.value.findIndex(m => m.id < 0 && m.sender_type === 'ai');
+            if (idx !== -1) localMessages.value.splice(idx, 1);
+        }
     }
 
     if (fresh.some(m => m.sender_type === 'ai')) isAiThinking.value = false;
@@ -183,13 +194,12 @@ const isSending = ref(false);
 
 async function sendMessage() {
     const content = messageContent.value.trim();
-    if (!content || isSending.value || props.chat.status !== 'active') return;
+    if (!content || isSending.value || localChatStatus.value !== 'active') return;
 
+    // 1. Clear input and show optimistic bubble immediately — zero perceptible delay
     messageContent.value = '';
-    isSending.value = true;
     isAiThinking.value = true;
 
-    // Optimistic: show user's message immediately
     const tempId = -Date.now();
     localMessages.value.push({
         id: tempId,
@@ -200,7 +210,9 @@ async function sendMessage() {
     });
     scrollToBottom();
 
-    // Streaming AI message state
+    // 2. Lock only briefly to prevent double-submit
+    isSending.value = true;
+
     const aiTempId = -(Date.now() + 1);
     let streamingAiAdded = false;
 
@@ -215,12 +227,19 @@ async function sendMessage() {
             body: JSON.stringify({ content }),
         });
 
+        // 3. Re-enable input as soon as the server confirms receipt — don't wait for AI
+        isSending.value = false;
+        nextTick(() => textareaRef.value?.focus());
+
         if (!res.ok) {
             localMessages.value = localMessages.value.filter(m => m.id !== tempId);
             messageContent.value = content;
             isAiThinking.value = false;
-        } else if (res.headers.get('content-type')?.includes('text/event-stream') && res.body) {
-            // Stream AI tokens token-by-token
+            return;
+        }
+
+        if (res.headers.get('content-type')?.includes('text/event-stream') && res.body) {
+            // 4. Stream AI tokens in the background — input is already re-enabled
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
@@ -247,7 +266,6 @@ async function sendMessage() {
                         if (token) {
                             aiContent += token;
                             if (!streamingAiAdded) {
-                                // First token: add AI bubble and stop "thinking" indicator
                                 localMessages.value.push({
                                     id: aiTempId,
                                     sender_type: 'ai',
@@ -266,15 +284,14 @@ async function sendMessage() {
                     } catch { /* json parse — skip */ }
                 }
             }
+        } else {
+            isAiThinking.value = false;
         }
-        // On success: next poll confirms real message IDs (replaces optimistic temp IDs)
     } catch {
         localMessages.value = localMessages.value.filter(m => m.id !== tempId && m.id !== aiTempId);
         messageContent.value = content;
         isAiThinking.value = false;
-    } finally {
         isSending.value = false;
-        nextTick(() => textareaRef.value?.focus());
     }
 }
 
@@ -373,7 +390,7 @@ const sessionSummary = ref(props.initialSummary ?? '');
 let echoChannel: any = null;
 
 onMounted(() => {
-    if (props.chat.status !== 'finalized') {
+    if (localChatStatus.value !== 'finalized') {
         // Join Echo presence channel — real-time messages + typing + join events
         try {
             echoChannel = joinChatChannel(
@@ -391,16 +408,20 @@ onMounted(() => {
                 },
                 (data: { userId: number; userName: string }) => {
                     showJoinedBanner(data.userName);
+                    // Optimistically enable the input immediately
+                    localChatStatus.value = 'active';
+                    // Then reload the full chat prop (participants list, pending invitations, etc.)
+                    router.reload({ only: ['chat'] });
                 },
             );
         } catch {
             // Echo not available (Reverb not running) — fall back to polling
         }
 
-        // Keep polling as a safety net (60s interval) in case WebSocket drops
-        pollTimer = setInterval(pollMessages, 60000);
+        // Keep polling as a safety net (5s interval) in case WebSocket drops
+        pollTimer = setInterval(pollMessages, 5000);
     }
-    if (props.chat.status === 'active') {
+    if (localChatStatus.value === 'active') {
         typingTimer = setInterval(pollTyping, 1500);
     }
     sendHeartbeat();
@@ -524,21 +545,21 @@ function avatarColor(id: number) { return avatarColors[id % avatarColors.length]
                     </button>
 
                     <span
-                        v-if="chat.status === 'waiting'"
+                        v-if="localChatStatus === 'waiting'"
                         class="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-600 ring-1 ring-amber-200 sm:px-3"
                     >
                         <Hourglass class="h-3 w-3" />
                         <span class="hidden sm:inline">Waiting</span>
                     </span>
                     <span
-                        v-else-if="chat.status === 'finalized'"
+                        v-else-if="localChatStatus === 'finalized'"
                         class="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-500 sm:px-3"
                     >
                         <CheckCircle2 class="h-3 w-3 text-emerald-500" />
                         <span class="hidden sm:inline">Closed</span>
                     </span>
                     <button
-                        v-else-if="isCreator && chat.status === 'active'"
+                        v-else-if="isCreator && localChatStatus === 'active'"
                         @click="confirmingFinalize = true"
                         class="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50 sm:px-3"
                     >
@@ -549,7 +570,7 @@ function avatarColor(id: number) { return avatarColors[id % avatarColors.length]
             </div>
 
             <!-- ── Waiting banner ───────────────────────────────────────── -->
-            <div v-if="chat.status === 'waiting'" class="border-b border-amber-100 bg-amber-50 px-4 py-3 sm:px-6">
+            <div v-if="localChatStatus === 'waiting'" class="border-b border-amber-100 bg-amber-50 px-4 py-3 sm:px-6">
                 <div class="flex items-start gap-2.5">
                     <Hourglass class="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
                     <p class="text-sm text-amber-700">
@@ -601,7 +622,7 @@ function avatarColor(id: number) { return avatarColors[id % avatarColors.length]
             <div class="flex-1 overflow-y-auto bg-gray-50 px-3 py-5 sm:px-6 sm:py-6">
 
                 <!-- Empty state -->
-                <div v-if="localMessages.length === 0 && chat.status === 'active'" class="flex h-full flex-col items-center justify-center text-center">
+                <div v-if="localMessages.length === 0 && localChatStatus === 'active'" class="flex h-full flex-col items-center justify-center text-center">
                     <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-gray-900 shadow-lg">
                         <Sparkles class="h-6 w-6 text-white" />
                     </div>
@@ -727,12 +748,12 @@ function avatarColor(id: number) { return avatarColors[id % avatarColors.length]
             <!-- ── Input area ───────────────────────────────────────────── -->
             <div class="border-t border-gray-100 bg-white px-3 py-3 sm:px-6 sm:py-4">
 
-                <div v-if="chat.status === 'waiting'" class="flex items-center gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-600">
+                <div v-if="localChatStatus === 'waiting'" class="flex items-center gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-600">
                     <Hourglass class="h-4 w-4 flex-shrink-0" />
                     Messaging is disabled until all participants join.
                 </div>
 
-                <div v-else-if="chat.status === 'finalized'" class="flex items-center gap-2 rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-500 ring-1 ring-gray-100">
+                <div v-else-if="localChatStatus === 'finalized'" class="flex items-center gap-2 rounded-2xl bg-gray-50 px-4 py-3 text-sm text-gray-500 ring-1 ring-gray-100">
                     <AlertCircle class="h-4 w-4 flex-shrink-0" />
                     This session is closed.
                 </div>
@@ -759,7 +780,7 @@ function avatarColor(id: number) { return avatarColors[id % avatarColors.length]
                         <Send class="h-4 w-4" />
                     </button>
                 </div>
-                <p class="mt-2 text-center text-[11px] text-gray-300" v-if="chat.status === 'active'">
+                <p class="mt-2 text-center text-[11px] text-gray-300" v-if="localChatStatus === 'active'">
                     Enter to send · Shift+Enter for new line
                 </p>
             </div>
