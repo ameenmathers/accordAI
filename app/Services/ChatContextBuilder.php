@@ -36,6 +36,11 @@ class ChatContextBuilder
             default                  => 'deep',
         };
 
+        // For long chats: pass the boundary ID so AiReasoningService can summarise older context
+        $olderBoundaryId = ($totalMessageCount > $messageLimit && ! empty($messages))
+            ? ($messages[0]['id'] ?? null)
+            : null;
+
         return [
             'chat' => [
                 'id' => $chat->id,
@@ -50,6 +55,8 @@ class ChatContextBuilder
             'total_message_count' => $totalMessageCount,
             'stage' => $stage,
             'tone' => $this->detectTone($messages),
+            'agreements' => $this->detectAgreements($messages),
+            'older_boundary_id' => $olderBoundaryId,
         ];
     }
 

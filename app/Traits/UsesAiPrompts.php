@@ -127,7 +127,9 @@ PROMPT;
         array $participationStats = [],
         string $stage = 'active',
         string $tone = 'neutral',
-        int $totalMessageCount = 0
+        int $totalMessageCount = 0,
+        array $agreements = [],
+        string $rollingSummary = ''
     ): string {
         // ── Participants section ──────────────────────────────────────────
         $participantLines = collect($participants)->map(function ($p, $index) use ($participationStats) {
@@ -147,6 +149,19 @@ PROMPT;
             $memorySection = "\n══ KNOWN CONTEXT (from prior sessions) ══\n{$notes}\n";
         }
 
+        // ── Settled points ────────────────────────────────────────────────
+        $settledSection = '';
+        if (! empty($agreements)) {
+            $lines = implode("\n", array_map(fn ($a) => "  · {$a}", $agreements));
+            $settledSection = "\n══ SETTLED POINTS ══\n{$lines}\n(Don't re-open these — build on them.)\n";
+        }
+
+        // ── Rolling summary of older context ─────────────────────────────
+        $rollingSection = '';
+        if (! empty($rollingSummary)) {
+            $rollingSection = "\n══ EARLIER IN THIS SESSION ══\n{$rollingSummary}\n";
+        }
+
         // ── Conversation history ──────────────────────────────────────────
         $history = collect($recentMessages)->map(function ($msg) {
             $label = $msg['sender_type'] === 'ai' ? 'AccordAI' : $msg['sender_name'];
@@ -154,7 +169,7 @@ PROMPT;
             return "[{$label}]: {$msg['content']}";
         })->implode("\n\n");
 
-        // ── Session state ─────────────────────────────────────────────────────
+        // ── Session state ─────────────────────────────────────────────────
         $stageNote = match ($stage) {
             'opening' => "opening ({$totalMessageCount} messages) — context-gathering is fine",
             'deep'    => "deep ({$totalMessageCount} messages) — push toward resolution",
@@ -162,15 +177,15 @@ PROMPT;
         };
 
         $toneNote = match ($tone) {
-            'tense'      => 'tense — de-escalation may be needed',
+            'tense'       => 'tense — de-escalation may be needed',
             'progressing' => 'constructive — keep momentum',
-            default      => 'neutral',
+            default       => 'neutral',
         };
 
         return <<<MESSAGE
 ══ PARTICIPANTS ══
 {$participantLines}
-{$memorySection}
+{$memorySection}{$settledSection}{$rollingSection}
 ══ SESSION STATE ══
 Stage: {$stageNote}
 Tone: {$toneNote}

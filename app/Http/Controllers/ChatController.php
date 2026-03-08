@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Events\MessageSent;
+use App\Jobs\CheckChatEngagement;
 use App\Mail\ChatInvitationMail;
 use App\Models\Chat;
 use App\Models\ChatInvitation;
@@ -283,6 +284,9 @@ class ChatController extends Controller
                 'created_at' => $userMessage->created_at->toISOString(),
             ]))->toOthers();
         } catch (\Exception) { /* non-fatal: Reverb may not be running */ }
+
+        // Proactive re-engagement: if the chat goes quiet for 10 min, Accord will check in
+        CheckChatEngagement::dispatch($chat->id, $userMessage->id)->delay(now()->addMinutes(10));
 
         // Auto-extract insights every 20 user messages (threshold-based memory)
         $userMessageCount = $chat->messages()->where('sender_type', 'user')->count();

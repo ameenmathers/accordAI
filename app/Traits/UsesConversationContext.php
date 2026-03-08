@@ -129,6 +129,37 @@ trait UsesConversationContext
     }
 
     /**
+     * Detect mutual agreement moments between participants.
+     * Returns up to 2 brief excerpts where both users signalled agreement in sequence.
+     * Injected into the prompt so Accord doesn't re-litigate settled points.
+     */
+    protected function detectAgreements(array $recentMessages): array
+    {
+        $agreementPhrases = ['agree', 'that works', 'sounds good', "let's do that", 'deal', 'fair enough', 'that makes sense', 'ok with that', 'yes exactly', 'works for me', 'happy with that'];
+
+        $userMessages = collect($recentMessages)->where('sender_type', 'user')->values();
+        $agreements = [];
+
+        for ($i = 0; $i < $userMessages->count() - 1; $i++) {
+            $msg1 = $userMessages[$i];
+            $msg2 = $userMessages[$i + 1];
+
+            if ($msg1['sender_id'] === $msg2['sender_id']) {
+                continue;
+            }
+
+            $agreed1 = collect($agreementPhrases)->contains(fn ($p) => str_contains(strtolower($msg1['content']), $p));
+            $agreed2 = collect($agreementPhrases)->contains(fn ($p) => str_contains(strtolower($msg2['content']), $p));
+
+            if ($agreed1 && $agreed2) {
+                $agreements[] = mb_substr($msg1['content'], 0, 80);
+            }
+        }
+
+        return array_slice(array_unique($agreements), -2);
+    }
+
+    /**
      * Detect the conversational tone from the most recent human messages.
      * Returns 'tense', 'progressing', or 'neutral'.
      */

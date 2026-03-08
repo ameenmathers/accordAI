@@ -59,12 +59,6 @@ trait UsesEvidenceRules
             return false;
         }
 
-        // Prevent AI stacking: skip if the two most recent DB messages are both AI
-        $lastTwo = $chat->messages()->latest()->limit(2)->pluck('sender_type');
-        if ($lastTwo->count() === 2 && $lastTwo->every(fn ($t) => $t === 'ai')) {
-            return false;
-        }
-
         // Always respond to conflict indicators regardless of other rules
         foreach (['disagree', 'wrong', 'unfair', 'upset', 'angry', 'frustrated', 'problem', 'issue', 'never', 'always'] as $keyword) {
             if (stripos($trimmed, $keyword) !== false) {
@@ -78,6 +72,24 @@ trait UsesEvidenceRules
             $lastMessage = $chat->messages()->latest()->first();
             if ($lastMessage && $lastMessage->sender_type === 'ai') {
                 return false;
+            }
+        }
+
+        // Both-responded gate: in a 2-person chat, wait for both participants to weigh in
+        // after Accord's last response before responding again. This gives participants
+        // space to actually talk to each other rather than Accord dominating.
+        if ($chat->participants()->count() >= 2) {
+            $lastAiMsg = $chat->messages()->where('sender_type', 'ai')->latest()->first();
+            if ($lastAiMsg) {
+                $uniqueSpeakers = $chat->messages()
+                    ->where('sender_type', 'user')
+                    ->where('id', '>', $lastAiMsg->id)
+                    ->distinct('sender_id')
+                    ->count('sender_id');
+
+                if ($uniqueSpeakers < 2) {
+                    return false;
+                }
             }
         }
 

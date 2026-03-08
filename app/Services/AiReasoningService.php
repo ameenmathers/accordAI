@@ -5,9 +5,11 @@ namespace App\Services;
 use App\Events\MessageSent;
 use App\Models\Chat;
 use App\Models\Message;
+use App\Services\AiMemoryService;
 use App\Traits\UsesAiPrompts;
 use App\Traits\UsesEvidenceRules;
 use Exception;
+use Illuminate\Support\Facades\Cache;
 use OpenAI\Laravel\Facades\OpenAI;
 
 /**
@@ -77,8 +79,12 @@ class AiReasoningService
         $context = $this->contextBuilder->build($chat);
         $participantNames = array_column($context['participants'], 'name');
 
+        $this->handleToneCacheAndMemory($chat, $context);
+
         $systemPrompt = $this->getMediatorSystemPrompt($chat->context_type, $participantNames)
             . $this->getEvidenceFrameworks($chat->context_type);
+
+        $rollingSummary = $this->maybeGetRollingSummary($chat, $context);
 
         $userMessage = $this->buildMediationUserMessage(
             $context['participants'],
@@ -87,7 +93,9 @@ class AiReasoningService
             $context['participation_stats'],
             $context['stage'],
             $context['tone'],
-            $context['total_message_count']
+            $context['total_message_count'],
+            $context['agreements'],
+            $rollingSummary
         );
 
         $stream = OpenAI::chat()->createStreamed([
@@ -147,14 +155,15 @@ class AiReasoningService
      */
     public function mediate(Chat $chat): Message
     {
-        // Assemble full context including participation balance stats
         $context = $this->contextBuilder->build($chat);
-
         $participantNames = array_column($context['participants'], 'name');
 
-        // System prompt = mediator identity + evidence frameworks for this context type
+        $this->handleToneCacheAndMemory($chat, $context);
+
         $systemPrompt = $this->getMediatorSystemPrompt($chat->context_type, $participantNames)
             . $this->getEvidenceFrameworks($chat->context_type);
+
+        $rollingSummary = $this->maybeGetRollingSummary($chat, $context);
 
         $userMessage = $this->buildMediationUserMessage(
             $context['participants'],
@@ -163,7 +172,9 @@ class AiReasoningService
             $context['participation_stats'],
             $context['stage'],
             $context['tone'],
-            $context['total_message_count']
+            $context['total_message_count'],
+            $context['agreements'],
+            $rollingSummary
         );
 
         // GPT-4o with enough tokens for a structured 2-3 paragraph response.
@@ -209,6 +220,129 @@ class AiReasoningService
         } catch (\Exception) { /* non-fatal */ }
 
         return $aiMessage;
+    }
+
+    /**
+     * Send a short nudge when both participants have gone quiet for 10+ minutes.
+     * Called by CheckChatEngagement job.
+     */
+    public function sendEngagementNudge(Chat $chat): void
+    {
+        $context = $this->contextBuilder->build($chat);
+        $participantNames = array_column($context['participants'], 'name');
+
+        $systemPrompt = $this->getMediatorSystemPrompt($chat->context_type, $participantNames)
+            ."\n\nIMPORTANT: Both participants have gone quiet. Send a single warm sentence that gently re-engages them — reference something specific from the conversation. No question needed.";
+
+        $userMessage = $this->buildMediationUserMessage(
+            $context['participants'],
+            $context['messages'],
+            $context['context_notes'],
+            $context['participation_stats'],
+            $context['stage'],
+            $context['tone'],
+            $context['total_message_count'],
+            $context['agreements']
+        );
+
+        $response = OpenAI::chat()->create([
+            'model' => 'gpt-4o',
+            'messages' => [
+                ['role' => 'system', 'content' => $systemPrompt],
+                ['role' => 'user', 'content' => $userMessage],
+            ],
+            'max_tokens' => 60,
+            'temperature' => 0.8,
+        ]);
+
+        $content = trim($response->choices[0]->message->content ?? '');
+        if (empty($content)) {
+            return;
+        }
+
+        $message = Message::create([
+            'chat_id' => $chat->id,
+            'sender_type' => 'ai',
+            'sender_id' => null,
+            'content' => $content,
+        ]);
+
+        try {
+            broadcast(new MessageSent($chat->id, [
+                'id' => $message->id,
+                'sender_type' => 'ai',
+                'sender' => null,
+                'content' => $content,
+                'created_at' => $message->created_at->toISOString(),
+            ]));
+        } catch (\Exception) { /* non-fatal */ }
+
+        $participantIds = $chat->participants()->pluck('users.id')->toArray();
+        try {
+            $this->webPushService->sendToUsers($participantIds, 'Accord', $content, ['url' => '/chats/'.$chat->id]);
+        } catch (\Exception) { /* non-fatal */ }
+    }
+
+    /**
+     * For chats longer than the recent-message window, generate (and cache) a
+     * 2–3 sentence summary of the older context so nothing important is lost.
+     */
+    private function maybeGetRollingSummary(Chat $chat, array $context): string
+    {
+        if ($context['older_boundary_id'] === null) {
+            return '';
+        }
+
+        $cacheKey = "chat_rolling_summary_{$chat->id}_{$context['older_boundary_id']}";
+
+        return Cache::remember($cacheKey, 3600, function () use ($chat, $context) {
+            $olderMessages = $chat->messages()
+                ->with('sender')
+                ->where('id', '<', $context['older_boundary_id'])
+                ->orderBy('id')
+                ->get()
+                ->map(fn ($m) => '['.($m->sender_type === 'ai' ? 'Accord' : ($m->sender?->name ?? 'User')).']: '.$m->content)
+                ->implode("\n");
+
+            if (empty($olderMessages)) {
+                return '';
+            }
+
+            $response = OpenAI::chat()->create([
+                'model' => 'gpt-4o',
+                'messages' => [
+                    ['role' => 'system', 'content' => 'Summarise this conversation excerpt in 2–3 sentences. Cover: what was discussed, any tensions raised, and any agreements reached. Be factual and neutral.'],
+                    ['role' => 'user', 'content' => $olderMessages],
+                ],
+                'max_tokens' => 120,
+                'temperature' => 0.3,
+            ]);
+
+            return trim($response->choices[0]->message->content ?? '');
+        });
+    }
+
+    /**
+     * Cache the current tone and trigger memory extraction on a tension→resolution shift.
+     * This is smarter than the fixed every-20-messages extraction.
+     */
+    private function handleToneCacheAndMemory(Chat $chat, array $context): void
+    {
+        $previousTone = Cache::get("chat_tone_{$chat->id}", 'neutral');
+        Cache::put("chat_tone_{$chat->id}", $context['tone'], 3600);
+
+        // Tension resolved → good moment to capture behavioral memory
+        if ($previousTone === 'tense' && in_array($context['tone'], ['neutral', 'progressing'])) {
+            $lastExtractKey = "last_memory_extraction_{$chat->id}";
+            $lastExtractCount = Cache::get($lastExtractKey, 0);
+
+            if ($context['total_message_count'] - $lastExtractCount >= 8) {
+                Cache::put($lastExtractKey, $context['total_message_count'], 3600);
+                try {
+                    app(AiMemoryService::class)->extractAndStoreMemory($chat);
+                } catch (\Exception) { /* non-fatal */ }
+            }
+        }
     }
 
     /**
