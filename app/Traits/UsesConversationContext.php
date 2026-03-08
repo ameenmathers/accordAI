@@ -129,6 +129,40 @@ trait UsesConversationContext
     }
 
     /**
+     * Detect the conversational tone from the most recent human messages.
+     * Returns 'tense', 'progressing', or 'neutral'.
+     */
+    protected function detectTone(array $recentMessages): string
+    {
+        $text = strtolower(
+            collect($recentMessages)
+                ->where('sender_type', 'user')
+                ->takeLast(4)
+                ->pluck('content')
+                ->implode(' ')
+        );
+
+        if (empty($text)) {
+            return 'neutral';
+        }
+
+        foreach (['angry', 'upset', 'frustrated', 'ridiculous', 'unfair', 'wrong', 'hate', 'stupid', 'useless'] as $word) {
+            if (str_contains($text, $word)) {
+                return 'tense';
+            }
+        }
+
+        $progressHits = 0;
+        foreach (['agree', 'that makes sense', 'good point', 'exactly', 'fair', 'understood'] as $word) {
+            if (str_contains($text, $word)) {
+                $progressHits++;
+            }
+        }
+
+        return $progressHits >= 2 ? 'progressing' : 'neutral';
+    }
+
+    /**
      * Build a full plain-text transcript for Claude's memory extraction.
      */
     protected function buildChatTranscript(Chat $chat): string

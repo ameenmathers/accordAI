@@ -28,6 +28,13 @@ class ChatContextBuilder
     {
         $participants = $this->loadParticipants($chat);
         $messages = $this->loadRecentMessages($chat, $messageLimit);
+        $totalMessageCount = $chat->messages()->count();
+
+        $stage = match (true) {
+            $totalMessageCount <= 4  => 'opening',
+            $totalMessageCount <= 14 => 'active',
+            default                  => 'deep',
+        };
 
         return [
             'chat' => [
@@ -39,8 +46,10 @@ class ChatContextBuilder
             'participants' => $participants,
             'messages' => $messages,
             'context_notes' => $this->loadUserContextNotes($chat),
-            // Participation analysis — who's speaking, who isn't
             'participation_stats' => $this->analyzeParticipationBalance($participants, $messages),
+            'total_message_count' => $totalMessageCount,
+            'stage' => $stage,
+            'tone' => $this->detectTone($messages),
         ];
     }
 

@@ -58,6 +58,7 @@ function mockAiServices(): void
             ]);
         });
         $mock->shouldReceive('generateSummary')->andReturn('Test summary.');
+        $mock->shouldReceive('closingRitual')->andReturn(null);
     }));
 
     app()->instance(AiMemoryService::class, Mockery::mock(AiMemoryService::class, function ($mock) {

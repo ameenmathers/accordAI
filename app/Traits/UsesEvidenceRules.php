@@ -2,6 +2,8 @@
 
 namespace App\Traits;
 
+use App\Models\Chat;
+
 /**
  * Provides evidence-based rules and frameworks that the AI uses to validate
  * and enrich its mediation responses. These are injected into prompts as
@@ -42,27 +44,43 @@ trait UsesEvidenceRules
     }
 
     /**
-     * Validates that a message is substantive enough to warrant AI mediation.
-     * Short/trivial messages (greetings, acknowledgements) may not need a response.
+     * Decides whether the AI should respond to this message.
+     *
+     * Skips:
+     *  - Empty messages
+     *  - Pure one-word acknowledgements when AI already just responded
+     *  - AI stacking: last two messages are both from AI
      */
-    protected function shouldAiRespond(string $messageContent): bool
+    protected function shouldAiRespond(string $messageContent, Chat $chat): bool
     {
         $trimmed = trim($messageContent);
 
-        // Only skip completely empty messages
         if (strlen($trimmed) < 1) {
             return false;
         }
 
-        // Always respond to messages containing conflict indicators
-        $conflictKeywords = ['disagree', 'wrong', 'unfair', 'upset', 'angry', 'frustrated', 'problem', 'issue', 'never', 'always'];
-        foreach ($conflictKeywords as $keyword) {
+        // Prevent AI stacking: skip if the two most recent DB messages are both AI
+        $lastTwo = $chat->messages()->latest()->limit(2)->pluck('sender_type');
+        if ($lastTwo->count() === 2 && $lastTwo->every(fn ($t) => $t === 'ai')) {
+            return false;
+        }
+
+        // Always respond to conflict indicators regardless of other rules
+        foreach (['disagree', 'wrong', 'unfair', 'upset', 'angry', 'frustrated', 'problem', 'issue', 'never', 'always'] as $keyword) {
             if (stripos($trimmed, $keyword) !== false) {
                 return true;
             }
         }
 
-        // Default: respond to every user message for now (can be tuned)
+        // Skip pure acknowledgements when AI just responded (last message is AI)
+        $acks = ['ok', 'okay', 'k', 'sure', 'yeah', 'yes', 'yep', 'got it', 'thanks', 'thank you', 'lol', 'haha', 'nice', 'great', 'cool', 'right', 'agreed', 'alright'];
+        if (mb_strlen($trimmed) <= 20 && in_array(strtolower($trimmed), $acks, true)) {
+            $lastMessage = $chat->messages()->latest()->first();
+            if ($lastMessage && $lastMessage->sender_type === 'ai') {
+                return false;
+            }
+        }
+
         return true;
     }
 

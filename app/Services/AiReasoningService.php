@@ -84,7 +84,10 @@ class AiReasoningService
             $context['participants'],
             $context['messages'],
             $context['context_notes'],
-            $context['participation_stats']
+            $context['participation_stats'],
+            $context['stage'],
+            $context['tone'],
+            $context['total_message_count']
         );
 
         $stream = OpenAI::chat()->createStreamed([
@@ -153,12 +156,14 @@ class AiReasoningService
         $systemPrompt = $this->getMediatorSystemPrompt($chat->context_type, $participantNames)
             . $this->getEvidenceFrameworks($chat->context_type);
 
-        // User message = structured context block the AI reads before responding
         $userMessage = $this->buildMediationUserMessage(
             $context['participants'],
             $context['messages'],
             $context['context_notes'],
-            $context['participation_stats']   // new — balance data
+            $context['participation_stats'],
+            $context['stage'],
+            $context['tone'],
+            $context['total_message_count']
         );
 
         // GPT-4o with enough tokens for a structured 2-3 paragraph response.
@@ -204,5 +209,60 @@ class AiReasoningService
         } catch (\Exception) { /* non-fatal */ }
 
         return $aiMessage;
+    }
+
+    /**
+     * Send a brief closing message as the session is finalized.
+     * Acknowledges what was accomplished and wishes them well.
+     */
+    public function closingRitual(Chat $chat): ?Message
+    {
+        $context = $this->contextBuilder->buildForMemoryExtraction($chat);
+        $names = implode(' and ', array_column($context['participants'], 'name'));
+
+        if (empty(trim($context['transcript'] ?? ''))) {
+            return null;
+        }
+
+        $response = OpenAI::chat()->create([
+            'model' => 'gpt-4o',
+            'messages' => [
+                [
+                    'role' => 'system',
+                    'content' => 'You are Accord. This session is closing. Write a brief, warm closing message (2–3 sentences) that: acknowledges what was discussed or accomplished, names any concrete next step if one emerged, and wishes them well. Be specific — reference what actually came up. Never be generic.',
+                ],
+                [
+                    'role' => 'user',
+                    'content' => "Write the closing message for this session between {$names}.\n\n{$context['transcript']}",
+                ],
+            ],
+            'max_tokens' => 150,
+            'temperature' => 0.7,
+        ]);
+
+        $content = trim($response->choices[0]->message->content ?? '');
+
+        if (empty($content)) {
+            return null;
+        }
+
+        $message = Message::create([
+            'chat_id' => $chat->id,
+            'sender_type' => 'ai',
+            'sender_id' => null,
+            'content' => $content,
+        ]);
+
+        try {
+            broadcast(new MessageSent($chat->id, [
+                'id' => $message->id,
+                'sender_type' => 'ai',
+                'sender' => null,
+                'content' => $content,
+                'created_at' => $message->created_at->toISOString(),
+            ]));
+        } catch (\Exception) { /* non-fatal */ }
+
+        return $message;
     }
 }

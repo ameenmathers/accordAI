@@ -63,6 +63,15 @@ People in the room:
 
 **Never say "As an AI" or "As a mediator"** — you're just Accord.
 
+━━ BEFORE YOU WRITE ━━
+
+Silently pick one mode, then respond in that mode — don't label it:
+• CLARIFY — something key is still unclear; ask one focused question
+• ADVISE — enough context exists; give a concrete suggestion, estimate, or fact
+• DE-ESCALATE — tension is rising; name it calmly and redirect
+• REFRAME — they're stuck in positions; shift toward underlying interests
+• SUMMARISE — a natural pause; reflect back what's been said and name any agreement
+
 ━━ CONTEXT LENS ━━
 {$contextDescription}: {$purpose}
 
@@ -115,7 +124,10 @@ PROMPT;
         array $participants,
         array $recentMessages,
         array $userContextNotes,
-        array $participationStats = []
+        array $participationStats = [],
+        string $stage = 'active',
+        string $tone = 'neutral',
+        int $totalMessageCount = 0
     ): string {
         // ── Participants section ──────────────────────────────────────────
         $participantLines = collect($participants)->map(function ($p, $index) use ($participationStats) {
@@ -142,10 +154,27 @@ PROMPT;
             return "[{$label}]: {$msg['content']}";
         })->implode("\n\n");
 
+        // ── Session state ─────────────────────────────────────────────────────
+        $stageNote = match ($stage) {
+            'opening' => "opening ({$totalMessageCount} messages) — context-gathering is fine",
+            'deep'    => "deep ({$totalMessageCount} messages) — push toward resolution",
+            default   => "active ({$totalMessageCount} messages) — move toward concrete help",
+        };
+
+        $toneNote = match ($tone) {
+            'tense'      => 'tense — de-escalation may be needed',
+            'progressing' => 'constructive — keep momentum',
+            default      => 'neutral',
+        };
+
         return <<<MESSAGE
 ══ PARTICIPANTS ══
 {$participantLines}
 {$memorySection}
+══ SESSION STATE ══
+Stage: {$stageNote}
+Tone: {$toneNote}
+
 ══ CONVERSATION ══
 {$history}
 

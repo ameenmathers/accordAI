@@ -294,7 +294,7 @@ class ChatController extends Controller
             }
         }
 
-        $shouldRespond = $this->shouldAiRespond($validated['content']);
+        $shouldRespond = $this->shouldAiRespond($validated['content'], $chat);
 
         // Streaming path: client sends Accept: text/event-stream → stream tokens in real time
         // (skips the synchronous mediate() call — mediateStreaming() saves the message itself)
@@ -357,6 +357,13 @@ class ChatController extends Controller
         }
 
         $chat->update(['status' => 'finalized']);
+
+        // Closing ritual: Accord sends a final message before memory extraction
+        try {
+            $this->aiReasoningService->closingRitual($chat);
+        } catch (\Exception) {
+            // Non-fatal
+        }
 
         try {
             $this->aiMemoryService->extractAndStoreMemory($chat);
