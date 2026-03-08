@@ -93,7 +93,7 @@ class AiReasoningService
                 ['role' => 'system', 'content' => $systemPrompt],
                 ['role' => 'user', 'content' => $userMessage],
             ],
-            'max_tokens' => 200,
+            'max_tokens' => 350,
             'temperature' => 0.85,
         ]);
 
@@ -169,7 +169,7 @@ class AiReasoningService
                 ['role' => 'system', 'content' => $systemPrompt],
                 ['role' => 'user', 'content' => $userMessage],
             ],
-            'max_tokens' => 200, // enough for 2-3 sentences + concrete suggestion
+            'max_tokens' => 350, // enough for 2-3 sentences + concrete suggestion
             'temperature' => 0.85, // warmer, more natural
         ]);
 
