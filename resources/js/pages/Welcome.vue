@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, Link } from '@inertiajs/vue3';
 import { dashboard, login, register } from '@/routes';
-import { Sparkles, ArrowRight } from 'lucide-vue-next';
+import { MessageCircle, ArrowRight, Sparkles, Shield, Zap } from 'lucide-vue-next';
 
 withDefaults(
     defineProps<{
@@ -14,41 +14,41 @@ withDefaults(
 </script>
 
 <template>
-    <Head title="AccordAI — AI-mediated conversations" />
+    <Head title="AccordAI — Chat free with your AI companion" />
 
-    <div class="flex min-h-screen flex-col bg-[#FDFDFC] text-[#1b1b18]">
+    <div class="flex min-h-screen flex-col bg-[#FAFAF9] text-[#1b1b18]">
 
         <!-- ── Nav ───────────────────────────────────────────────────────── -->
-        <header class="border-b border-[#e3e3e0] px-6 py-4 lg:px-12">
-            <div class="mx-auto flex max-w-4xl items-center justify-between">
+        <header class="px-6 py-4 lg:px-12">
+            <div class="mx-auto flex max-w-5xl items-center justify-between">
                 <div class="flex items-center gap-2.5">
-                    <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-[#1b1b18]">
-                        <Sparkles class="h-4 w-4 text-white" />
+                    <div class="flex h-9 w-9 items-center justify-center rounded-2xl bg-violet-600 shadow-lg shadow-violet-200">
+                        <MessageCircle class="h-5 w-5 text-white" />
                     </div>
-                    <span class="text-sm font-semibold">AccordAI</span>
+                    <span class="text-base font-bold tracking-tight">AccordAI</span>
                 </div>
 
                 <nav class="flex items-center gap-2">
                     <Link
                         v-if="$page.props.auth.user"
                         :href="dashboard()"
-                        class="inline-flex items-center gap-1.5 rounded-lg border border-[#1b1b18] bg-[#1b1b18] px-4 py-1.5 text-sm font-medium text-white transition hover:bg-black"
+                        class="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
                     >
-                        Dashboard <ArrowRight class="h-3.5 w-3.5" />
+                        Open App <ArrowRight class="h-3.5 w-3.5" />
                     </Link>
                     <template v-else>
                         <Link
                             :href="login()"
-                            class="rounded-lg px-4 py-1.5 text-sm font-medium text-[#706f6c] transition hover:text-[#1b1b18]"
+                            class="rounded-xl px-4 py-2 text-sm font-medium text-[#706f6c] transition hover:text-[#1b1b18]"
                         >
                             Log in
                         </Link>
                         <Link
                             v-if="canRegister"
                             :href="register()"
-                            class="rounded-lg border border-[#1b1b18] bg-[#1b1b18] px-4 py-1.5 text-sm font-medium text-white transition hover:bg-black"
+                            class="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700"
                         >
-                            Get started
+                            Get started free
                         </Link>
                     </template>
                 </nav>
@@ -56,49 +56,65 @@ withDefaults(
         </header>
 
         <!-- ── Hero ──────────────────────────────────────────────────────── -->
-        <main class="flex flex-1 flex-col items-center justify-center px-6 py-24 text-center lg:px-12">
+        <main class="flex flex-1 flex-col items-center justify-center px-6 py-20 text-center lg:px-12">
             <div class="mx-auto max-w-2xl">
 
-                <p class="mb-5 inline-flex items-center gap-1.5 rounded-full border border-[#e3e3e0] bg-white px-3 py-1 text-xs font-medium text-[#706f6c]">
-                    <Sparkles class="h-3 w-3 text-[#1b1b18]" />
-                    Open source · Built with Laravel & Vue
+                <p class="mb-7 inline-flex items-center gap-2 rounded-full border border-violet-100 bg-violet-50 px-4 py-2 text-xs font-semibold text-violet-600">
+                    <Sparkles class="h-3.5 w-3.5" />
+                    Chat free · Your AI companion is always ready
                 </p>
 
                 <h1 class="mb-5 text-5xl font-bold leading-[1.1] tracking-tight text-[#1b1b18] lg:text-6xl">
                     A smarter way<br />to work through conflict
                 </h1>
 
-                <p class="mx-auto mb-3 max-w-xl text-lg text-[#706f6c]">
-                    AccordAI is an AI-powered mediation platform. Invite the other party, start a session, and let the AI keep both sides heard and the conversation on track.
+                <p class="mx-auto mb-4 max-w-xl text-lg leading-relaxed text-[#706f6c]">
+                    AccordAI pairs you with an AI companion that listens, mediates, and keeps conversations productive — whether you're resolving a dispute or working through something difficult together.
                 </p>
 
                 <p class="mx-auto mb-10 max-w-md text-sm text-[#a9a9a4]">
-                    No therapist, no lawyer, no back-and-forth emails. Just a structured, evidence-based conversation — private, async-ready, and free to self-host.
+                    Invite the other party, start a session, and let AI keep both sides heard. Private, structured, and always free.
                 </p>
 
                 <div class="flex flex-wrap items-center justify-center gap-3">
                     <Link
                         v-if="canRegister"
                         :href="register()"
-                        class="inline-flex items-center gap-2 rounded-xl border border-black bg-[#1b1b18] px-6 py-3 text-sm font-semibold text-white transition hover:bg-black"
+                        class="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-7 py-3.5 text-sm font-bold text-white shadow-xl shadow-violet-200 transition hover:bg-violet-700 active:scale-[0.98]"
                     >
-                        Start a session — it's free
+                        Start chatting free
                         <ArrowRight class="h-4 w-4" />
                     </Link>
                     <Link
                         :href="login()"
-                        class="inline-flex items-center gap-2 rounded-xl border border-[#e3e3e0] px-6 py-3 text-sm font-semibold text-[#706f6c] transition hover:border-[#c3c3be] hover:text-[#1b1b18]"
+                        class="inline-flex items-center gap-2 rounded-2xl border border-[#e3e3e0] bg-white px-7 py-3.5 text-sm font-semibold text-[#706f6c] transition hover:border-[#c3c3be] hover:text-[#1b1b18]"
                     >
                         Log in
                     </Link>
+                </div>
+
+                <!-- Feature pills -->
+                <div class="mt-12 flex flex-wrap items-center justify-center gap-3">
+                    <span class="inline-flex items-center gap-1.5 rounded-full bg-white border border-[#e3e3e0] px-3.5 py-1.5 text-xs font-medium text-[#706f6c]">
+                        <Shield class="h-3 w-3 text-emerald-500" />
+                        Completely private
+                    </span>
+                    <span class="inline-flex items-center gap-1.5 rounded-full bg-white border border-[#e3e3e0] px-3.5 py-1.5 text-xs font-medium text-[#706f6c]">
+                        <Zap class="h-3 w-3 text-amber-500" />
+                        Real-time AI mediation
+                    </span>
+                    <span class="inline-flex items-center gap-1.5 rounded-full bg-white border border-[#e3e3e0] px-3.5 py-1.5 text-xs font-medium text-[#706f6c]">
+                        <MessageCircle class="h-3 w-3 text-violet-500" />
+                        Up to 3 participants
+                    </span>
                 </div>
 
             </div>
         </main>
 
         <!-- ── Footer ────────────────────────────────────────────────────── -->
-        <footer class="border-t border-[#e3e3e0] px-6 py-5 text-center text-xs text-[#a9a9a4]">
-            © {{ new Date().getFullYear() }} AccordAI · AI-mediated conversations
+        <footer class="px-6 py-5 text-center text-xs text-[#a9a9a4]">
+            © {{ new Date().getFullYear() }} AccordAI · Chat free with your AI companion
         </footer>
 
     </div>
