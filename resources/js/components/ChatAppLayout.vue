@@ -33,12 +33,12 @@ const props = defineProps<{
 
 // ── Auth user ───────────────────────────────────────────────────────────────
 const page = usePage<{ auth: { user: { id: number; name: string; email: string; username?: string } }; flash?: { success?: string; error?: string; info?: string } }>();
-const authUser = computed(() => page.value.props.auth.user);
+const authUser = computed(() => page.props.auth.user);
 
 // ── Toast ───────────────────────────────────────────────────────────────────
 const { success, error, info } = useToast();
 watch(
-    () => page.value.props.flash,
+    () => page.props.flash,
     (flash) => {
         if (flash?.success) success(flash.success);
         if (flash?.error)   error(flash.error);
