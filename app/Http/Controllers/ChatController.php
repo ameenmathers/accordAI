@@ -32,14 +32,13 @@ class ChatController extends Controller
     ) {}
 
     /**
-     * List all chats the user participates in.
-     * GET /chats
+     * Build the chat list for the authenticated user.
      */
-    public function index(Request $request): Response
+    private function buildUserChats(Request $request): \Illuminate\Support\Collection
     {
         $userId = $request->user()->id;
 
-        $chats = $request->user()
+        return $request->user()
             ->chats()
             ->with([
                 'creator:id,name',
@@ -81,8 +80,16 @@ class ChatController extends Controller
                     'updated_at' => $chat->updated_at,
                 ];
             });
+    }
 
-        // Collect all participant IDs from the user's chats, check global online status
+    /**
+     * List all chats the user participates in.
+     * GET /chats
+     */
+    public function index(Request $request): Response
+    {
+        $chats = $this->buildUserChats($request);
+
         $onlineUserIds = $chats
             ->flatMap(fn ($c) => collect($c['participants'])->pluck('id'))
             ->unique()
@@ -215,6 +222,8 @@ class ChatController extends Controller
                 'id' => $request->user()->id,
                 'name' => $request->user()->name,
             ],
+            'chats' => $this->buildUserChats($request),
+            'contextTypes' => $this->getContextTypes(),
             'initialInviteLink' => session('invite_link'),
             'initialReadStatus' => $readStatus,
             'initialSummary' => session('session_summary'),
