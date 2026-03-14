@@ -46,15 +46,15 @@ function decline(id: number) {
     <Head title="Dashboard" />
 
     <AppLayout :breadcrumbs="breadcrumbs">
-        <div class="flex h-full flex-1 flex-col overflow-y-auto bg-[#FDFDFC] p-6 lg:p-8">
+        <div class="flex h-full flex-1 flex-col overflow-y-auto bg-[#FAFAF9] p-6 lg:p-8">
             <div class="mx-auto w-full max-w-4xl space-y-6">
 
                 <!-- ── Pending Invitations ──────────────────────────────── -->
                 <div v-if="pendingInvitations.length > 0">
                     <div class="mb-3 flex items-center gap-2">
-                        <Bell class="h-4 w-4 text-[#706f6c]" />
-                        <h2 class="text-sm font-semibold text-[#1b1b18]">Pending Invitations</h2>
-                        <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#1b1b18] text-[10px] font-bold text-white">
+                        <Bell class="h-4 w-4 text-violet-500" />
+                        <h2 class="text-sm font-semibold text-gray-900">Pending Invitations</h2>
+                        <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold text-white">
                             {{ pendingInvitations.length }}
                         </span>
                     </div>
@@ -62,19 +62,19 @@ function decline(id: number) {
                         <li
                             v-for="inv in pendingInvitations"
                             :key="inv.id"
-                            class="flex items-center gap-4 rounded-xl border border-[#e3e3e0] bg-white px-4 py-3 shadow-sm"
+                            class="flex items-center gap-4 rounded-2xl border border-violet-100 bg-white px-4 py-3 shadow-sm"
                         >
-                            <!-- Context dot -->
-                            <div :class="['flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl', contextStyle(inv.context_type).bg]">
+                            <!-- Context icon -->
+                            <div :class="['flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl', contextStyle(inv.context_type).bg]">
                                 <MessageSquare :class="['h-4 w-4', contextStyle(inv.context_type).text]" />
                             </div>
 
                             <!-- Info -->
                             <div class="min-w-0 flex-1">
-                                <p class="truncate text-sm font-medium text-[#1b1b18]">{{ inv.chat_title }}</p>
-                                <p class="mt-0.5 text-xs text-[#706f6c]">
-                                    Invited by <strong class="text-[#1b1b18]">{{ inv.invited_by }}</strong>
-                                    · <span :class="['capitalize', contextStyle(inv.context_type).text]">{{ inv.context_type }}</span>
+                                <p class="truncate text-sm font-semibold text-gray-900">{{ inv.chat_title }}</p>
+                                <p class="mt-0.5 text-xs text-gray-400">
+                                    Invited by <strong class="text-gray-700">{{ inv.invited_by }}</strong>
+                                    · <span :class="['capitalize font-medium', contextStyle(inv.context_type).text]">{{ inv.context_type }}</span>
                                 </p>
                             </div>
 
@@ -82,14 +82,14 @@ function decline(id: number) {
                             <div class="flex flex-shrink-0 items-center gap-2">
                                 <button
                                     @click="accept(inv.id)"
-                                    class="inline-flex items-center gap-1.5 rounded-lg bg-[#1b1b18] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-black"
+                                    class="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-violet-200 transition hover:bg-violet-700"
                                 >
                                     <Check class="h-3 w-3" />
                                     Accept
                                 </button>
                                 <button
                                     @click="decline(inv.id)"
-                                    class="inline-flex items-center gap-1.5 rounded-lg border border-[#e3e3e0] px-3 py-1.5 text-xs font-medium text-[#706f6c] transition hover:border-gray-300 hover:text-[#1b1b18]"
+                                    class="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:border-gray-300 hover:text-gray-700"
                                 >
                                     <X class="h-3 w-3" />
                                     Decline
@@ -100,98 +100,86 @@ function decline(id: number) {
                 </div>
 
                 <!-- ── Main card ────────────────────────────────────────── -->
-                <div class="overflow-hidden rounded-xl shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] lg:flex">
+                <div class="overflow-hidden rounded-3xl shadow-sm ring-1 ring-gray-100 lg:flex">
 
                     <!-- Left: content panel -->
-                    <div class="flex-1 bg-white p-8 text-[13px] leading-[20px] lg:p-12">
+                    <div class="flex-1 bg-white p-8 text-[13px] leading-[20px] lg:p-10">
                         <div class="mb-1 flex items-center gap-2">
-                            <div class="flex h-7 w-7 items-center justify-center rounded-lg bg-[#1b1b18]">
-                                <Sparkles class="h-3.5 w-3.5 text-white" />
+                            <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-600 shadow-sm shadow-violet-200">
+                                <Sparkles class="h-4 w-4 text-white" />
                             </div>
-                            <span class="text-xs font-semibold uppercase tracking-widest text-[#706f6c]">AccordAI</span>
+                            <span class="text-xs font-bold uppercase tracking-widest text-violet-500">AccordAI</span>
                         </div>
 
-                        <h1 class="mb-1 mt-5 text-lg font-semibold text-[#1b1b18]">Welcome back</h1>
-                        <p class="mb-6 text-[#706f6c]">
+                        <h1 class="mb-1 mt-5 text-xl font-bold text-gray-900">Welcome back</h1>
+                        <p class="mb-6 text-gray-500">
                             Start a mediation session, invite participants, and let AI guide the conversation.
                         </p>
 
                         <!-- How it works list -->
-                        <ul class="mb-6 flex flex-col">
-                            <li class="relative flex items-start gap-4 py-2.5 before:absolute before:top-1/2 before:bottom-0 before:left-[0.4rem] before:border-l before:border-[#e3e3e0]">
-                                <span class="relative bg-white py-1">
-                                    <span class="flex h-3.5 w-3.5 items-center justify-center rounded-full border border-[#e3e3e0] bg-[#FDFDFC] shadow-[0px_0px_1px_0px_rgba(0,0,0,0.03),0px_1px_2px_0px_rgba(0,0,0,0.06)]">
-                                        <span class="h-1.5 w-1.5 rounded-full bg-[#1b1b18]" />
-                                    </span>
-                                </span>
-                                <span class="text-[#706f6c]">
-                                    <strong class="text-[#1b1b18]">Create a session</strong> — choose a context type and invite participants by username
+                        <ul class="mb-6 flex flex-col gap-1">
+                            <li class="flex items-start gap-3 rounded-2xl bg-violet-50 px-4 py-3">
+                                <span class="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-violet-600 text-[10px] font-bold text-white">1</span>
+                                <span class="text-gray-600">
+                                    <strong class="text-gray-900">Create a session</strong> — choose a context type and invite participants by username or link
                                 </span>
                             </li>
-                            <li class="relative flex items-start gap-4 py-2.5 before:absolute before:top-0 before:bottom-1/2 before:left-[0.4rem] before:border-l before:border-[#e3e3e0]">
-                                <span class="relative bg-white py-1">
-                                    <span class="flex h-3.5 w-3.5 items-center justify-center rounded-full border border-[#e3e3e0] bg-[#FDFDFC] shadow-[0px_0px_1px_0px_rgba(0,0,0,0.03),0px_1px_2px_0px_rgba(0,0,0,0.06)]">
-                                        <span class="h-1.5 w-1.5 rounded-full bg-[#dbdbd7]" />
-                                    </span>
-                                </span>
-                                <span class="text-[#706f6c]">
-                                    <strong class="text-[#1b1b18]">AI mediates</strong> — AccordAI responds with neutral, evidence-based guidance after every message
+                            <li class="flex items-start gap-3 rounded-2xl bg-gray-50 px-4 py-3">
+                                <span class="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-gray-300 text-[10px] font-bold text-white">2</span>
+                                <span class="text-gray-600">
+                                    <strong class="text-gray-900">AI mediates</strong> — AccordAI responds with neutral, evidence-based guidance after every message
                                 </span>
                             </li>
                         </ul>
 
                         <!-- CTAs -->
-                        <ul class="flex flex-wrap gap-3 text-sm">
-                            <li>
-                                <Link
-                                    href="/chats"
-                                    class="inline-flex items-center gap-2 rounded-sm border border-black bg-[#1b1b18] px-5 py-1.5 text-sm leading-normal text-white transition hover:bg-black"
-                                >
-                                    <MessageSquare class="h-3.5 w-3.5" />
-                                    Go to Sessions
-                                </Link>
-                            </li>
-                            <li>
-                                <Link
-                                    href="/chats"
-                                    class="inline-flex items-center gap-2 rounded-sm border border-[#19140035] px-5 py-1.5 text-sm leading-normal text-[#1b1b18] transition hover:border-[#1915014a]"
-                                >
-                                    New Session
-                                    <ArrowRight class="h-3.5 w-3.5" />
-                                </Link>
-                            </li>
-                        </ul>
+                        <div class="flex flex-wrap gap-3">
+                            <Link
+                                href="/chats"
+                                class="inline-flex items-center gap-2 rounded-2xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-violet-200 transition hover:bg-violet-700"
+                            >
+                                <MessageSquare class="h-4 w-4" />
+                                Open Messages
+                            </Link>
+                            <Link
+                                href="/chats"
+                                class="inline-flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 transition hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700"
+                            >
+                                New Session
+                                <ArrowRight class="h-4 w-4" />
+                            </Link>
+                        </div>
                     </div>
 
                     <!-- Right: feature cards panel -->
-                    <div class="relative bg-[#f5f5f3] p-8 lg:w-80 lg:shrink-0">
-                        <p class="mb-4 text-xs font-semibold uppercase tracking-widest text-[#706f6c]">Features</p>
+                    <div class="bg-[#F5F3FF] p-8 lg:w-80 lg:shrink-0">
+                        <p class="mb-4 text-xs font-bold uppercase tracking-widest text-violet-400">Features</p>
                         <ul class="space-y-3">
-                            <li class="flex items-start gap-3 rounded-lg bg-white p-4 shadow-[0px_0px_0px_1px_rgba(26,26,0,0.08)] text-[13px]">
-                                <div class="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-[#1b1b18]">
-                                    <Users class="h-3.5 w-3.5 text-white" />
+                            <li class="flex items-start gap-3 rounded-2xl bg-white p-4 shadow-sm text-[13px]">
+                                <div class="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-violet-600 shadow-sm shadow-violet-200">
+                                    <Users class="h-4 w-4 text-white" />
                                 </div>
                                 <div>
-                                    <p class="font-medium text-[#1b1b18]">Multi-party sessions</p>
-                                    <p class="mt-0.5 text-[#706f6c]">2–3 participants, invited by username or link</p>
+                                    <p class="font-semibold text-gray-900">Multi-party sessions</p>
+                                    <p class="mt-0.5 text-gray-500">2–3 participants, invited by username or link</p>
                                 </div>
                             </li>
-                            <li class="flex items-start gap-3 rounded-lg bg-white p-4 shadow-[0px_0px_0px_1px_rgba(26,26,0,0.08)] text-[13px]">
-                                <div class="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-[#1b1b18]">
-                                    <ShieldCheck class="h-3.5 w-3.5 text-white" />
+                            <li class="flex items-start gap-3 rounded-2xl bg-white p-4 shadow-sm text-[13px]">
+                                <div class="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-violet-600 shadow-sm shadow-violet-200">
+                                    <ShieldCheck class="h-4 w-4 text-white" />
                                 </div>
                                 <div>
-                                    <p class="font-medium text-[#1b1b18]">Neutral AI mediator</p>
-                                    <p class="mt-0.5 text-[#706f6c]">Evidence-based, addresses everyone by name</p>
+                                    <p class="font-semibold text-gray-900">Neutral AI mediator</p>
+                                    <p class="mt-0.5 text-gray-500">Evidence-based, addresses everyone by name</p>
                                 </div>
                             </li>
-                            <li class="flex items-start gap-3 rounded-lg bg-white p-4 shadow-[0px_0px_0px_1px_rgba(26,26,0,0.08)] text-[13px]">
-                                <div class="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-[#1b1b18]">
-                                    <Brain class="h-3.5 w-3.5 text-white" />
+                            <li class="flex items-start gap-3 rounded-2xl bg-white p-4 shadow-sm text-[13px]">
+                                <div class="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-violet-600 shadow-sm shadow-violet-200">
+                                    <Brain class="h-4 w-4 text-white" />
                                 </div>
                                 <div>
-                                    <p class="font-medium text-[#1b1b18]">Memory extraction</p>
-                                    <p class="mt-0.5 text-[#706f6c]">Claude extracts behavioral insights after each session</p>
+                                    <p class="font-semibold text-gray-900">Memory extraction</p>
+                                    <p class="mt-0.5 text-gray-500">Claude extracts behavioral insights after each session</p>
                                 </div>
                             </li>
                         </ul>
