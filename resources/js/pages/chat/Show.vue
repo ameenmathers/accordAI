@@ -527,6 +527,14 @@ const headerOnline = computed(() => headerParticipant.value ? onlineUserIds.valu
 
                     <!-- Bubble -->
                     <div :class="['flex max-w-[75%] flex-col gap-1 sm:max-w-[60%]', message.sender_type === 'user' && message.sender?.id === currentUser.id ? 'items-end' : 'items-start']">
+                        <!-- Sender name (left-side messages only) -->
+                        <span
+                            v-if="message.sender_type !== 'user' || message.sender?.id !== currentUser.id"
+                            class="px-1 text-[10px] font-semibold"
+                            :class="message.sender_type === 'ai' ? 'text-violet-500' : 'text-gray-400'"
+                        >
+                            {{ message.sender_type === 'ai' ? 'Accord' : message.sender?.name }}
+                        </span>
                         <!-- Bubble body -->
                         <div
                             :class="[
@@ -535,7 +543,7 @@ const headerOnline = computed(() => headerParticipant.value ? onlineUserIds.valu
                                     ? 'rounded-bl-sm bg-violet-100 text-gray-800'
                                     : message.sender?.id === currentUser.id
                                         ? 'rounded-br-sm bg-white text-gray-900 shadow-sm ring-1 ring-gray-100'
-                                        : 'rounded-bl-sm bg-violet-100 text-gray-800',
+                                        : 'rounded-bl-sm bg-gray-100 text-gray-800',
                                 message.id < 0 ? 'opacity-60' : ''
                             ]"
                         >

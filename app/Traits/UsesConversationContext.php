@@ -111,7 +111,7 @@ trait UsesConversationContext
 
             // Generate a plain-English note the AI can read and act on
             $note = match (true) {
-                $count === 0 => 'has not spoken yet — needs to be drawn in',
+                $count === 0 => 'has not spoken yet',
                 $count === $minCount && $count < $maxCount && $count > 0 => "less active ({$percentage}% of messages) — may need more voice",
                 $count === $maxCount && $maxCount > $minCount => "most active speaker ({$percentage}% of messages)",
                 $id === $lastSpeakerId => "spoke most recently",

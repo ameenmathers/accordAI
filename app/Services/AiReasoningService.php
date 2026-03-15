@@ -104,7 +104,7 @@ class AiReasoningService
                 ['role' => 'system', 'content' => $systemPrompt],
                 ['role' => 'user', 'content' => $userMessage],
             ],
-            'max_tokens' => 350,
+            'max_tokens' => 700,
             'temperature' => 0.85,
         ]);
 
@@ -177,16 +177,14 @@ class AiReasoningService
             $rollingSummary
         );
 
-        // GPT-4o with enough tokens for a structured 2-3 paragraph response.
-        // 350 tokens ≈ ~260 words — substantial enough to be useful, short enough for chat UI.
         $response = OpenAI::chat()->create([
             'model' => 'gpt-4o',
             'messages' => [
                 ['role' => 'system', 'content' => $systemPrompt],
                 ['role' => 'user', 'content' => $userMessage],
             ],
-            'max_tokens' => 350, // enough for 2-3 sentences + concrete suggestion
-            'temperature' => 0.85, // warmer, more natural
+            'max_tokens' => 700,
+            'temperature' => 0.85,
         ]);
 
         $aiContent = $response->choices[0]->message->content;

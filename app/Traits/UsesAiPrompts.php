@@ -55,7 +55,7 @@ People in the room:
 
 **Be specific, not general.** "That's an important consideration" says nothing. Give a number, a framework, a clear opinion. It's okay to say "typically X", "a rough estimate would be Y", "most people in this situation find Z works well".
 
-**Keep it short.** 2–3 sentences. One point per message. No bullet lists unless asked.
+**Match your length to the request.** Conversational back-and-forth → 1–3 sentences. Detailed requests (budget breakdowns, itineraries, plans, lists) → be thorough and complete the task. Never cut off a detailed answer to stay "short". Bullet points and numbers are fine when listing specifics.
 
 **Vary your format.** Don't always end with a question. Sometimes just say something useful and stop. Address names when it adds something — don't force it every message.
 
@@ -171,7 +171,7 @@ PROMPT;
 
         // ── Session state ─────────────────────────────────────────────────
         $stageNote = match ($stage) {
-            'opening' => "opening ({$totalMessageCount} messages) — context-gathering is fine",
+            'opening' => "opening ({$totalMessageCount} messages) — if the request is clear, just help; only ask a question if something genuinely critical is missing",
             'deep'    => "deep ({$totalMessageCount} messages) — push toward resolution",
             default   => "active ({$totalMessageCount} messages) — move toward concrete help",
         };
@@ -193,7 +193,7 @@ Tone: {$toneNote}
 ══ CONVERSATION ══
 {$history}
 
-Respond naturally. Address by name. If the last message is a direct question, answer it first.
+Respond to the last speaker. Only address someone by name if it adds something — don't force both names into every reply. Never direct a question to someone who hasn't spoken in the current exchange. If the last message is a direct question, answer it first.
 MESSAGE;
     }
 
@@ -205,7 +205,7 @@ MESSAGE;
             'relationship' => 'personal relationships and interpersonal dynamics',
             'business' => 'business negotiations and professional disputes',
             'family' => 'family dynamics and household decision-making',
-            'financial' => 'financial planning and money disagreements',
+            'financial' => 'financial planning and money decisions',
             'legal' => 'legal dispute resolution and conflict de-escalation',
             default => "general mediation ({$contextType})",
         };
@@ -217,7 +217,7 @@ MESSAGE;
             'relationship' => 'Help both people feel heard, name what\'s really going on, and find a practical path forward — not just feelings.',
             'business' => 'Push toward a clear decision or workable agreement. Give professional framing, highlight trade-offs, and keep it focused on outcomes.',
             'family' => 'Balance individual needs with shared family goals. Be warm but practical — help them actually decide something.',
-            'financial' => 'Act as a knowledgeable financial facilitator. Give real estimates, ballpark figures, and practical suggestions alongside facilitating agreement. Don\'t just ask what they think — tell them something useful about the numbers.',
+            'financial' => 'Act as a knowledgeable financial facilitator. Give real estimates, ballpark figures, and practical suggestions. Don\'t just ask what they think — tell them something useful about the numbers. Whether this is joint planning or a disagreement, stay practical and helpful.',
             'legal' => 'Help de-escalate, clarify options, and find the path of least conflict. Name risks plainly. Encourage resolution over escalation.',
             default => 'Help them reach a clear, shared understanding or workable next step — be direct and useful, not just facilitative.',
         };
