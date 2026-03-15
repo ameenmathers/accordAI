@@ -45,18 +45,6 @@ function handleLogout() {
         <!-- Nav -->
         <nav class="flex-1 px-3 space-y-0.5">
             <Link
-                href="/chats"
-                :class="[
-                    'flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition',
-                    $page.url.startsWith('/chats')
-                        ? 'bg-violet-600 text-white shadow-sm shadow-violet-200'
-                        : 'text-gray-600 hover:bg-gray-50'
-                ]"
-            >
-                <MessageSquare class="h-4 w-4" />
-                Messages
-            </Link>
-            <Link
                 href="/dashboard"
                 :class="[
                     'flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition',
@@ -67,6 +55,18 @@ function handleLogout() {
             >
                 <LayoutGrid class="h-4 w-4" />
                 Dashboard
+            </Link>
+            <Link
+                href="/chats"
+                :class="[
+                    'flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition',
+                    $page.url.startsWith('/chats')
+                        ? 'bg-violet-600 text-white shadow-sm shadow-violet-200'
+                        : 'text-gray-600 hover:bg-gray-50'
+                ]"
+            >
+                <MessageSquare class="h-4 w-4" />
+                Messages
             </Link>
         </nav>
 

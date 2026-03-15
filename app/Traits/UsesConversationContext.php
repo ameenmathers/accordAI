@@ -168,7 +168,7 @@ trait UsesConversationContext
         $text = strtolower(
             collect($recentMessages)
                 ->where('sender_type', 'user')
-                ->takeLast(4)
+                ->take(-4)
                 ->pluck('content')
                 ->implode(' ')
         );
