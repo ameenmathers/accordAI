@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { Head, Link, useForm } from '@inertiajs/vue3';
-import AppLayout from '@/layouts/AppLayout.vue';
-import { type BreadcrumbItem } from '@/types';
+import AppDashboardLayout from '@/layouts/AppDashboardLayout.vue';
 import { MessageSquare, Sparkles, ArrowRight, ShieldCheck, Users, Brain, Bell, Check, X } from 'lucide-vue-next';
-import { dashboard } from '@/routes';
 
 interface PendingInvitation {
     id: number;
@@ -15,10 +13,6 @@ interface PendingInvitation {
 const props = defineProps<{
     pendingInvitations: PendingInvitation[];
 }>();
-
-const breadcrumbs: BreadcrumbItem[] = [
-    { title: 'Dashboard', href: dashboard().url },
-];
 
 const contextColors: Record<string, { bg: string; text: string; dot: string }> = {
     relationship: { bg: 'bg-pink-50',    text: 'text-pink-600',    dot: 'bg-pink-400' },
@@ -45,8 +39,8 @@ function decline(id: number) {
 <template>
     <Head title="Dashboard" />
 
-    <AppLayout :breadcrumbs="breadcrumbs">
-        <div class="flex h-full flex-1 flex-col overflow-y-auto bg-[#FAFAF9] p-6 lg:p-8">
+    <AppDashboardLayout>
+        <div class="flex h-full flex-1 flex-col overflow-y-auto bg-[#F8F7FF] p-6 lg:p-8">
             <div class="mx-auto w-full max-w-4xl space-y-6">
 
                 <!-- ── Pending Invitations ──────────────────────────────── -->
@@ -188,5 +182,5 @@ function decline(id: number) {
                 </div>
             </div>
         </div>
-    </AppLayout>
+    </AppDashboardLayout>
 </template>

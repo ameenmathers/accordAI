@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
-import { Link, useForm, usePage, router } from '@inertiajs/vue3';
-import { MessageSquare, LayoutGrid, Settings, LogOut, Plus, X, Sparkles, Search, UserPlus, Link2 } from 'lucide-vue-next';
+import { Link, useForm, usePage } from '@inertiajs/vue3';
+import { Plus, X, Sparkles, Search, UserPlus, Link2 } from 'lucide-vue-next';
+import ChatSidebar from '@/components/ChatSidebar.vue';
 import ToastContainer from '@/components/ToastContainer.vue';
 import { useToast } from '@/composables/useToast';
 
@@ -31,11 +32,8 @@ const props = defineProps<{
     activeChatId?: number | null;
 }>();
 
-// ── Auth user ───────────────────────────────────────────────────────────────
-const page = usePage<{ auth: { user: { id: number; name: string; email: string; username?: string } }; flash?: { success?: string; error?: string; info?: string } }>();
-const authUser = computed(() => page.props.auth.user);
-
 // ── Toast ───────────────────────────────────────────────────────────────────
+const page = usePage<{ flash?: { success?: string; error?: string; info?: string } }>();
 const { success, error, info } = useToast();
 watch(
     () => page.props.flash,
@@ -160,14 +158,6 @@ function chatDisplayTitle(chat: Chat): string {
 function truncate(text: string, max = 42): string {
     return text.length > max ? text.slice(0, max) + '…' : text;
 }
-
-function userInitials(name: string): string {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-}
-
-function handleLogout() {
-    router.flushAll();
-}
 </script>
 
 <template>
@@ -175,81 +165,7 @@ function handleLogout() {
     <div class="flex h-screen overflow-hidden bg-[#EEF0FB]">
 
         <!-- ── LEFT SIDEBAR ──────────────────────────────────────────────── -->
-        <aside class="flex w-56 flex-shrink-0 flex-col bg-white m-3 mr-0 rounded-3xl shadow-sm overflow-hidden">
-
-            <!-- Logo -->
-            <div class="px-6 pt-7 pb-5">
-                <Link href="/chats" class="flex items-center gap-2.5">
-                    <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-600 shadow-md shadow-violet-200">
-                        <MessageSquare class="h-4 w-4 text-white" />
-                    </div>
-                    <span class="text-base font-bold tracking-tight text-gray-900">AccordAI</span>
-                </Link>
-            </div>
-
-            <!-- User profile -->
-            <div class="px-5 pb-6">
-                <div class="flex flex-col items-center text-center">
-                    <div class="flex h-16 w-16 items-center justify-center rounded-full bg-violet-100 text-lg font-bold text-violet-600 ring-4 ring-violet-50">
-                        {{ userInitials(authUser.name) }}
-                    </div>
-                    <p class="mt-3 text-sm font-bold text-gray-900">{{ authUser.name }}</p>
-                    <p class="mt-0.5 text-xs text-gray-400">
-                        <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 mr-1 align-middle"></span>
-                        {{ authUser.username ? '@' + authUser.username : authUser.email.split('@')[0] }}
-                    </p>
-                </div>
-            </div>
-
-            <!-- Nav -->
-            <nav class="flex-1 px-3 space-y-0.5">
-                <Link
-                    href="/chats"
-                    :class="[
-                        'flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition',
-                        $page.url.startsWith('/chats')
-                            ? 'bg-violet-600 text-white shadow-sm shadow-violet-200'
-                            : 'text-gray-600 hover:bg-gray-50'
-                    ]"
-                >
-                    <MessageSquare class="h-4 w-4" />
-                    Messages
-                </Link>
-                <Link
-                    href="/dashboard"
-                    :class="[
-                        'flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition',
-                        $page.url === '/dashboard'
-                            ? 'bg-violet-600 text-white shadow-sm shadow-violet-200'
-                            : 'text-gray-600 hover:bg-gray-50'
-                    ]"
-                >
-                    <LayoutGrid class="h-4 w-4" />
-                    Dashboard
-                </Link>
-            </nav>
-
-            <!-- Bottom links -->
-            <div class="border-t border-gray-50 px-3 py-4 space-y-0.5">
-                <Link
-                    href="/settings/profile"
-                    class="flex items-center gap-3 rounded-2xl px-4 py-2.5 text-sm text-gray-500 transition hover:bg-gray-50 hover:text-gray-700"
-                >
-                    <Settings class="h-4 w-4" />
-                    Settings
-                </Link>
-                <Link
-                    href="/logout"
-                    method="post"
-                    as="button"
-                    @click="handleLogout"
-                    class="flex w-full items-center gap-3 rounded-2xl px-4 py-2.5 text-sm text-gray-500 transition hover:bg-red-50 hover:text-red-500"
-                >
-                    <LogOut class="h-4 w-4" />
-                    Log out
-                </Link>
-            </div>
-        </aside>
+        <ChatSidebar />
 
         <!-- ── MIDDLE: CHAT LIST ─────────────────────────────────────────── -->
         <div class="flex w-80 flex-shrink-0 flex-col bg-white m-3 mx-3 rounded-3xl shadow-sm overflow-hidden">
@@ -279,7 +195,7 @@ function handleLogout() {
             </div>
 
             <!-- Chat list -->
-            <div class="flex-1 overflow-y-auto pb-20">
+            <div class="flex-1 overflow-y-auto">
 
                 <!-- Empty state -->
                 <div v-if="chats.length === 0" class="flex flex-col items-center justify-center py-20 px-6 text-center">
@@ -346,17 +262,6 @@ function handleLogout() {
                     </li>
                 </ul>
             </div>
-
-            <!-- Floating new chat button -->
-            <div class="pointer-events-none absolute bottom-5 left-[15.5rem] z-10">
-                <button
-                    @click="showCreateModal = true"
-                    class="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-violet-600 px-5 py-2.5 text-xs font-bold text-white shadow-xl shadow-violet-300 transition hover:bg-violet-700 active:scale-95"
-                >
-                    <Plus class="h-3.5 w-3.5" />
-                    Start new chat
-                </button>
-            </div>
         </div>
 
         <!-- ── RIGHT: CONTENT SLOT ───────────────────────────────────────── -->
@@ -414,7 +319,6 @@ function handleLogout() {
                         <input v-model="form.title" type="text" placeholder="e.g. Budget planning disagreement" class="block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-300 focus:border-violet-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-100 transition" />
                     </div>
 
-                    <!-- Invite method toggle -->
                     <div>
                         <label class="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-500">Invite method</label>
                         <div class="flex overflow-hidden rounded-xl border border-gray-200 text-sm">
@@ -427,7 +331,6 @@ function handleLogout() {
                         </div>
                     </div>
 
-                    <!-- Username search -->
                     <div v-if="!useInviteLink">
                         <div v-if="selectedUsers.length > 0" class="mb-2 flex flex-wrap gap-1.5">
                             <span v-for="u in selectedUsers" :key="u.id" class="inline-flex items-center gap-1 rounded-full bg-violet-600 py-1 pl-3 pr-1.5 text-xs font-medium text-white">
@@ -449,7 +352,6 @@ function handleLogout() {
                         </div>
                     </div>
 
-                    <!-- Shareable link info -->
                     <div v-else class="rounded-xl border border-dashed border-violet-200 bg-violet-50 px-4 py-3.5 text-sm text-violet-600">
                         <p class="font-medium text-violet-700">A link will be generated after creation.</p>
                         <p class="mt-1 text-xs text-violet-500">Share it anywhere — the other person joins by clicking it.</p>
