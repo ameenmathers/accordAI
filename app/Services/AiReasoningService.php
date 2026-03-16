@@ -299,7 +299,7 @@ class AiReasoningService
                 ->where('id', '<', $context['older_boundary_id'])
                 ->orderBy('id')
                 ->get()
-                ->map(fn ($m) => '['.($m->sender_type === 'ai' ? 'Accord' : ($m->sender?->name ?? 'User')).']: '.$m->content)
+                ->map(fn ($m) => '['.($m->sender_type === 'ai' ? 'Accord' : ($m->sender?->name ?? 'User')).'] '.$m->content)
                 ->implode("\n");
 
             if (empty($olderMessages)) {
