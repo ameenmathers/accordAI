@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { Link, usePage, router } from '@inertiajs/vue3';
-import { MessageSquare, LayoutGrid, Settings, LogOut } from 'lucide-vue-next';
+import { LayoutGrid, Settings, LogOut } from 'lucide-vue-next';
 
 const page = usePage<{ auth: { user: { id: number; name: string; email: string; username?: string } } }>();
 const authUser = computed(() => page.props.auth.user);
@@ -21,9 +21,7 @@ function handleLogout() {
         <!-- Logo -->
         <div class="px-6 pt-7 pb-5">
             <Link href="/chats" class="flex items-center gap-2.5">
-                <div class="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-600 shadow-md shadow-violet-200">
-                    <MessageSquare class="h-4 w-4 text-white" />
-                </div>
+                <img src="/logo.png" alt="AccordAI" class="h-8 w-8 object-contain" />
                 <span class="text-base font-bold tracking-tight text-gray-900">AccordAI</span>
             </Link>
         </div>
