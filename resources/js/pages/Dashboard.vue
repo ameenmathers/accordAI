@@ -40,7 +40,7 @@ function decline(id: number) {
     <Head title="Dashboard" />
 
     <AppDashboardLayout>
-        <div class="flex h-full flex-1 flex-col overflow-y-auto bg-[#F8F7FF] p-6 lg:p-8">
+        <div class="flex h-full flex-1 flex-col overflow-y-auto bg-[#F8F7FF] p-4 md:p-6 lg:p-8">
             <div class="mx-auto w-full max-w-4xl space-y-6">
 
                 <!-- ── Pending Invitations ──────────────────────────────── -->

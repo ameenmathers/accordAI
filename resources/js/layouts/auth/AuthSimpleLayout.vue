@@ -63,9 +63,7 @@ defineProps<{
                 <!-- Mobile logo -->
                 <div class="mb-8 flex flex-col items-center gap-3 lg:hidden">
                     <Link :href="home()">
-                        <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-600 shadow-lg shadow-violet-200 transition hover:bg-violet-700">
-                            <MessageSquare class="h-6 w-6 text-white" />
-                        </div>
+                        <img src="/logo.png" alt="AccordAI" class="h-12 w-12 object-contain" />
                     </Link>
                     <span class="text-lg font-bold tracking-tight text-gray-900">AccordAI</span>
                 </div>

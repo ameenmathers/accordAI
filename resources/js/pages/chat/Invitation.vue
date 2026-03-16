@@ -31,9 +31,7 @@ function contextStyle(type: string) {
 
             <!-- Logo -->
             <div class="mb-8 text-center">
-                <div class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-600 shadow-lg shadow-violet-200">
-                    <MessageCircle class="h-6 w-6 text-white" />
-                </div>
+                <img src="/logo.png" alt="AccordAI" class="mx-auto mb-3 h-12 w-12 object-contain" />
                 <span class="text-xl font-bold tracking-tight text-gray-900">AccordAI</span>
                 <p class="mt-0.5 text-sm text-gray-400">Chat free with your AI companion</p>
             </div>

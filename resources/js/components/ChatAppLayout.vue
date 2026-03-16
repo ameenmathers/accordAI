@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
 import { Link, useForm, usePage } from '@inertiajs/vue3';
-import { Plus, X, Sparkles, Search, UserPlus, Link2 } from 'lucide-vue-next';
+import { Plus, X, Sparkles, Search, UserPlus, Link2, LayoutGrid, MessageSquare } from 'lucide-vue-next';
 import ChatSidebar from '@/components/ChatSidebar.vue';
 import ToastContainer from '@/components/ToastContainer.vue';
 import { useToast } from '@/composables/useToast';
@@ -164,11 +164,18 @@ function truncate(text: string, max = 42): string {
     <!-- Full-screen 3-panel shell -->
     <div class="flex h-screen overflow-hidden bg-[#EEF0FB]">
 
-        <!-- ── LEFT SIDEBAR ──────────────────────────────────────────────── -->
+        <!-- ── LEFT SIDEBAR (hidden on mobile) ──────────────────────────── -->
         <ChatSidebar />
 
         <!-- ── MIDDLE: CHAT LIST ─────────────────────────────────────────── -->
-        <div class="flex w-80 flex-shrink-0 flex-col bg-white m-3 mx-3 rounded-3xl shadow-sm overflow-hidden">
+        <!-- Mobile: full-width when no active chat, hidden when chat open -->
+        <!-- Desktop: fixed w-80 always visible -->
+        <div
+            :class="[
+                'flex-shrink-0 flex-col bg-white m-3 rounded-3xl shadow-sm overflow-hidden',
+                activeChatId ? 'hidden md:flex md:w-80' : 'flex w-full md:w-80'
+            ]"
+        >
 
             <!-- Header -->
             <div class="px-5 pt-6 pb-3">
@@ -195,7 +202,7 @@ function truncate(text: string, max = 42): string {
             </div>
 
             <!-- Chat list -->
-            <div class="flex-1 overflow-y-auto">
+            <div class="flex-1 overflow-y-auto pb-16 md:pb-0">
 
                 <!-- Empty state -->
                 <div v-if="chats.length === 0" class="flex flex-col items-center justify-center py-20 px-6 text-center">
@@ -265,11 +272,43 @@ function truncate(text: string, max = 42): string {
         </div>
 
         <!-- ── RIGHT: CONTENT SLOT ───────────────────────────────────────── -->
-        <div class="flex flex-1 flex-col overflow-hidden m-3 ml-3 rounded-3xl bg-white shadow-sm">
+        <!-- Mobile: full-width when chat open, hidden when showing list -->
+        <!-- Desktop: flex-1 always visible -->
+        <div
+            :class="[
+                'flex-1 flex-col overflow-hidden m-3 rounded-3xl bg-white shadow-sm',
+                activeChatId ? 'flex' : 'hidden md:flex',
+                'pb-16 md:pb-0'
+            ]"
+        >
             <slot />
         </div>
 
     </div>
+
+    <!-- ── Mobile bottom nav ──────────────────────────────────────────────── -->
+    <nav class="fixed bottom-0 left-0 right-0 z-40 flex border-t border-gray-100 bg-white md:hidden">
+        <Link
+            href="/dashboard"
+            :class="[
+                'flex flex-1 flex-col items-center gap-1 py-3 text-[10px] font-semibold transition',
+                $page.url === '/dashboard' ? 'text-violet-600' : 'text-gray-400'
+            ]"
+        >
+            <LayoutGrid class="h-5 w-5" />
+            Dashboard
+        </Link>
+        <Link
+            href="/chats"
+            :class="[
+                'flex flex-1 flex-col items-center gap-1 py-3 text-[10px] font-semibold transition',
+                $page.url.startsWith('/chats') ? 'text-violet-600' : 'text-gray-400'
+            ]"
+        >
+            <MessageSquare class="h-5 w-5" />
+            Messages
+        </Link>
+    </nav>
 
     <!-- ── Create Chat Modal ─────────────────────────────────────────────── -->
     <Teleport to="body">

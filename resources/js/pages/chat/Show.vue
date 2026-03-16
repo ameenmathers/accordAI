@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { Head, router } from '@inertiajs/vue3';
+import { Head, Link, router } from '@inertiajs/vue3';
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import ChatAppLayout from '@/components/ChatAppLayout.vue';
-import { Send, AlertCircle, CheckCircle2, Hourglass, X, Sparkles, Link2, Copy, Check, CheckCheck, QrCode, Smile, Paperclip, MoreVertical } from 'lucide-vue-next';
+import { Send, AlertCircle, CheckCircle2, Hourglass, X, Sparkles, Link2, Copy, Check, CheckCheck, QrCode, Smile, Paperclip, MoreVertical, ChevronLeft } from 'lucide-vue-next';
 import { joinChatChannel, type EchoMessage } from '@/echo';
 import QRCode from 'qrcode';
 
@@ -405,9 +405,13 @@ const headerOnline = computed(() => headerParticipant.value ? onlineUserIds.valu
     <ChatAppLayout :chats="chats" :context-types="contextTypes" :active-chat-id="chat.id">
 
         <!-- ── Chat header ───────────────────────────────────────────────── -->
-        <div class="flex items-center justify-between border-b border-gray-100 bg-white px-5 py-3.5">
-            <!-- Left: avatar + name + status -->
-            <div class="flex min-w-0 items-center gap-3">
+        <div class="flex items-center justify-between border-b border-gray-100 bg-white px-3 py-3.5 md:px-5">
+            <!-- Left: back (mobile) + avatar + name + status -->
+            <div class="flex min-w-0 items-center gap-2 md:gap-3">
+                <!-- Back to chat list on mobile -->
+                <Link href="/chats" class="md:hidden flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl text-gray-500 hover:bg-gray-100">
+                    <ChevronLeft class="h-5 w-5" />
+                </Link>
                 <div class="relative flex-shrink-0">
                     <div
                         v-if="headerParticipant"

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { Link, usePage, router } from '@inertiajs/vue3';
-import { LayoutGrid, Settings, LogOut } from 'lucide-vue-next';
+import { LayoutGrid, MessageSquare, Settings, LogOut } from 'lucide-vue-next';
 
 const page = usePage<{ auth: { user: { id: number; name: string; email: string; username?: string } } }>();
 const authUser = computed(() => page.props.auth.user);
@@ -16,7 +16,7 @@ function handleLogout() {
 </script>
 
 <template>
-    <aside class="flex w-56 flex-shrink-0 flex-col bg-white m-3 mr-0 rounded-3xl shadow-sm overflow-hidden">
+    <aside class="hidden md:flex w-56 flex-shrink-0 flex-col bg-white m-3 mr-0 rounded-3xl shadow-sm overflow-hidden">
 
         <!-- Logo -->
         <div class="px-6 pt-7 pb-5">
