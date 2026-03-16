@@ -18,9 +18,7 @@ withDefaults(
         <header class="px-6 py-4 lg:px-12">
             <div class="mx-auto flex max-w-5xl items-center justify-between">
                 <div class="flex items-center gap-2.5">
-                    <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-600 shadow-lg shadow-violet-200">
-                        <MessageSquare class="h-5 w-5 text-white" />
-                    </div>
+                    <img src="/logo.png" alt="AccordAI" class="h-9 w-9 object-contain" />
                     <span class="text-base font-bold tracking-tight">AccordAI</span>
                 </div>
 
