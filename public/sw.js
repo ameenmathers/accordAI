@@ -1,10 +1,6 @@
-const CACHE_NAME = 'accord-v1';
-const STATIC_ASSETS = ['/'];
+const CACHE_NAME = 'accord-v2';
 
-self.addEventListener('install', (event) => {
-    event.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
-    );
+self.addEventListener('install', () => {
     self.skipWaiting();
 });
 
@@ -17,21 +13,30 @@ self.addEventListener('activate', (event) => {
     self.clients.claim();
 });
 
-// Network-first strategy: always try network, fall back to cache
+// Only cache static build assets (JS/CSS bundles) — never intercept Inertia/HTML navigation
 self.addEventListener('fetch', (event) => {
-    // Skip non-GET, cross-origin, and API requests
-    if (
-        event.request.method !== 'GET' ||
-        !event.request.url.startsWith(self.location.origin) ||
-        event.request.url.includes('/api/') ||
-        (event.request.url.includes('/chats/') && event.request.url.includes('/messages'))
-    ) {
-        return;
-    }
+    const url = new URL(event.request.url);
 
-    event.respondWith(
-        fetch(event.request).catch(() => caches.match(event.request))
-    );
+    // Only cache-first for versioned build assets (they have content hashes in the filename)
+    if (
+        event.request.method === 'GET' &&
+        url.origin === self.location.origin &&
+        url.pathname.startsWith('/build/assets/')
+    ) {
+        event.respondWith(
+            caches.match(event.request).then((cached) => {
+                if (cached) return cached;
+                return fetch(event.request).then((response) => {
+                    if (response.ok) {
+                        const clone = response.clone();
+                        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+                    }
+                    return response;
+                });
+            })
+        );
+    }
+    // All other requests (HTML, API, chat routes) go straight to network — no SW interception
 });
 
 // ── Background push notifications ──────────────────────────────────────────
@@ -44,8 +49,8 @@ self.addEventListener('push', (event) => {
     event.waitUntil(
         self.registration.showNotification(payload.title, {
             body: payload.body,
-            icon: '/favicon.ico',
-            badge: '/favicon.ico',
+            icon: '/logo.png',
+            badge: '/logo.png',
             tag: 'accord-message',
             renotify: true,
             data: payload.data,

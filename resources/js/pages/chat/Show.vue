@@ -626,7 +626,7 @@ const headerOnline = computed(() => headerParticipant.value ? onlineUserIds.valu
                         placeholder="message"
                         rows="1"
                         :disabled="isSending"
-                        class="w-full resize-none bg-transparent text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none"
+                        class="w-full resize-none bg-transparent text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none [touch-action:manipulation]"
                         style="field-sizing: content; max-height: 120px;"
                     />
                 </div>

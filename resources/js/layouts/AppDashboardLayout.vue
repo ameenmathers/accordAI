@@ -29,7 +29,7 @@ watch(
     </div>
 
     <!-- ── Mobile bottom nav ──────────────────────────────────────────────── -->
-    <nav class="fixed bottom-0 left-0 right-0 z-40 flex border-t border-gray-100 bg-white md:hidden">
+    <nav class="fixed bottom-0 left-0 right-0 z-40 flex border-t border-gray-100 bg-white md:hidden" style="padding-bottom: env(safe-area-inset-bottom)">
         <Link
             href="/dashboard"
             :class="[
