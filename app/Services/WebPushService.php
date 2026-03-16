@@ -12,13 +12,18 @@ class WebPushService
 
     public function __construct()
     {
-        $this->webPush = new WebPush([
-            'VAPID' => [
-                'subject' => env('VAPID_SUBJECT', 'mailto:hello@accordai.app'),
-                'publicKey' => env('VAPID_PUBLIC_KEY'),
-                'privateKey' => env('VAPID_PRIVATE_KEY'),
-            ],
-        ]);
+        $publicKey  = config('services.vapid.public_key');
+        $privateKey = config('services.vapid.private_key');
+
+        if ($publicKey && $privateKey) {
+            $this->webPush = new WebPush([
+                'VAPID' => [
+                    'subject'    => config('services.vapid.subject', 'mailto:hello@accordai.app'),
+                    'publicKey'  => $publicKey,
+                    'privateKey' => $privateKey,
+                ],
+            ]);
+        }
     }
 
     /**
@@ -26,6 +31,10 @@ class WebPushService
      */
     public function sendToUsers(array $userIds, string $title, string $body, array $data = []): void
     {
+        if (! isset($this->webPush)) {
+            return; // VAPID keys not configured
+        }
+
         $subscriptions = PushSubscription::whereIn('user_id', $userIds)->get();
 
         if ($subscriptions->isEmpty()) {
