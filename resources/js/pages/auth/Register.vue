@@ -31,7 +31,6 @@ import { store } from '@/routes/register';
                         id="name"
                         type="text"
                         required
-                        autofocus
                         :tabindex="1"
                         autocomplete="name"
                         name="name"

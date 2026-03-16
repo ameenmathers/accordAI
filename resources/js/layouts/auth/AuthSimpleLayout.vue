@@ -10,7 +10,7 @@ defineProps<{
 </script>
 
 <template>
-    <div class="flex min-h-svh bg-[#EEF0FB]">
+    <div class="flex min-h-screen bg-[#EEF0FB]">
 
         <!-- Left decorative panel (hidden on mobile) -->
         <div class="hidden lg:flex lg:w-[45%] flex-col items-center justify-center bg-gradient-to-br from-violet-600 to-purple-700 p-12 text-white relative overflow-hidden">
@@ -57,7 +57,7 @@ defineProps<{
         </div>
 
         <!-- Right: form panel -->
-        <div class="flex flex-1 flex-col items-center justify-center p-6 lg:p-12">
+        <div class="flex flex-1 flex-col items-center justify-start overflow-y-auto py-12 px-6 lg:justify-center lg:px-12">
             <div class="w-full max-w-sm">
 
                 <!-- Mobile logo -->
