@@ -167,7 +167,7 @@ class InvitationController extends Controller
         if ($isNew) {
             try {
                 broadcast(new ParticipantJoined($chat->id, auth()->id(), auth()->user()->name));
-            } catch (\Exception) { /* non-fatal: Reverb may not be running */ }
+            } catch (\Throwable) { /* non-fatal: Reverb may not be running */ }
         }
 
         if ($chat->pendingInvitations()->count() === 0 && $chat->isWaiting()) {

@@ -75,24 +75,6 @@ trait UsesEvidenceRules
             }
         }
 
-        // Both-responded gate: in a 2-person chat, wait for both participants to weigh in
-        // after Accord's last response before responding again. This gives participants
-        // space to actually talk to each other rather than Accord dominating.
-        if ($chat->participants()->count() >= 2) {
-            $lastAiMsg = $chat->messages()->where('sender_type', 'ai')->latest()->first();
-            if ($lastAiMsg) {
-                $uniqueSpeakers = $chat->messages()
-                    ->where('sender_type', 'user')
-                    ->where('id', '>', $lastAiMsg->id)
-                    ->distinct('sender_id')
-                    ->count('sender_id');
-
-                if ($uniqueSpeakers < 2) {
-                    return false;
-                }
-            }
-        }
-
         return true;
     }
 

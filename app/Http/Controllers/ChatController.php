@@ -145,8 +145,8 @@ class ChatController extends Controller
             ]);
 
             try {
-                Mail::to($invitee->email)->send(new ChatInvitationMail($invitation, $request->user()));
-            } catch (\Exception) {
+                Mail::to($invitee->email)->queue(new ChatInvitationMail($invitation, $request->user()));
+            } catch (\Throwable) {
                 // Non-fatal if email fails
             }
         }
@@ -292,7 +292,7 @@ class ChatController extends Controller
                 'content' => $userMessage->content,
                 'created_at' => $userMessage->created_at->toISOString(),
             ]))->toOthers();
-        } catch (\Exception) { /* non-fatal: Reverb may not be running */ }
+        } catch (\Throwable) { /* non-fatal: Reverb may not be running */ }
 
         // Proactive re-engagement: if the chat goes quiet for 10 min, Accord will check in
         CheckChatEngagement::dispatch($chat->id, $userMessage->id)->delay(now()->addMinutes(10));
@@ -302,7 +302,7 @@ class ChatController extends Controller
         if ($userMessageCount > 0 && $userMessageCount % 20 === 0) {
             try {
                 $this->aiMemoryService->extractAndStoreMemory($chat);
-            } catch (\Exception) {
+            } catch (\Throwable) {
                 // Non-fatal
             }
         }
@@ -325,7 +325,7 @@ class ChatController extends Controller
                             echo 'data: '.json_encode(['token' => $token])."\n\n";
                             flush();
                         });
-                    } catch (\Exception) {
+                    } catch (\Throwable) {
                         // Non-fatal — client will see [DONE] and poll for the message
                     }
                 }
@@ -343,7 +343,7 @@ class ChatController extends Controller
         if ($shouldRespond) {
             try {
                 $this->aiReasoningService->mediate($chat);
-            } catch (\Exception $e) {
+            } catch (\Throwable) {
                 // Non-fatal: user message is saved
             }
         }
@@ -467,7 +467,11 @@ class ChatController extends Controller
             ->mapWithKeys(fn ($pid) => [$pid => Cache::get("chat_read_{$chat->id}_{$pid}", 0)])
             ->all();
 
-        return response()->json(['messages' => $messages, 'readStatus' => $readStatus]);
+        return response()->json([
+            'messages' => $messages,
+            'readStatus' => $readStatus,
+            'chatStatus' => $chat->fresh()->status,
+        ]);
     }
 
     /**

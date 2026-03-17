@@ -244,7 +244,14 @@ async function pollMessages() {
         if (res.ok) {
             const data = await res.json();
             if (Array.isArray(data)) { mergeMessages(data); }
-            else { mergeMessages(data.messages ?? []); if (data.readStatus) readStatus.value = { ...readStatus.value, ...data.readStatus }; }
+            else {
+                mergeMessages(data.messages ?? []);
+                if (data.readStatus) readStatus.value = { ...readStatus.value, ...data.readStatus };
+                if (data.chatStatus && data.chatStatus !== localChatStatus.value) {
+                    localChatStatus.value = data.chatStatus;
+                    if (data.chatStatus === 'active') router.reload({ only: ['chat'] });
+                }
+            }
         }
     } catch { /* silent */ }
 }
