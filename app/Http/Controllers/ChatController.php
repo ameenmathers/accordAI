@@ -325,8 +325,12 @@ class ChatController extends Controller
                             echo 'data: '.json_encode(['token' => $token])."\n\n";
                             flush();
                         });
-                    } catch (\Throwable) {
-                        // Non-fatal — client will see [DONE] and poll for the message
+                    } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::error('AI streaming failed', [
+                            'chat_id' => $chat->id,
+                            'error' => $e->getMessage(),
+                            'trace' => $e->getTraceAsString(),
+                        ]);
                     }
                 }
 
