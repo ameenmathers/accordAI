@@ -10,6 +10,7 @@ use App\Traits\UsesAiPrompts;
 use App\Traits\UsesEvidenceRules;
 use Exception;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use OpenAI\Laravel\Facades\OpenAI;
 
 /**
@@ -98,6 +99,14 @@ class AiReasoningService
             $rollingSummary
         );
 
+        Log::info('[AI] mediateStreaming: calling OpenAI', [
+            'chat_id'          => $chat->id,
+            'participants'     => $participantNames,
+            'context_type'     => $chat->context_type,
+            'system_prompt_len'=> strlen($systemPrompt),
+            'user_msg_len'     => strlen($userMessage),
+        ]);
+
         $stream = OpenAI::chat()->createStreamed([
             'model' => 'gpt-4o',
             'messages' => [
@@ -116,6 +125,12 @@ class AiReasoningService
                 $onToken($token);
             }
         }
+
+        Log::info('[AI] mediateStreaming: stream finished', [
+            'chat_id'        => $chat->id,
+            'response_length'=> strlen($fullContent),
+            'has_content'    => $fullContent !== '',
+        ]);
 
         if ($fullContent !== '') {
             $aiMessage = Message::create([
@@ -177,6 +192,14 @@ class AiReasoningService
             $rollingSummary
         );
 
+        Log::info('[AI] mediate: calling OpenAI', [
+            'chat_id'          => $chat->id,
+            'participants'     => $participantNames,
+            'context_type'     => $chat->context_type,
+            'system_prompt_len'=> strlen($systemPrompt),
+            'user_msg_len'     => strlen($userMessage),
+        ]);
+
         $response = OpenAI::chat()->create([
             'model' => 'gpt-4o',
             'messages' => [
@@ -188,6 +211,12 @@ class AiReasoningService
         ]);
 
         $aiContent = $response->choices[0]->message->content;
+
+        Log::info('[AI] mediate: OpenAI responded', [
+            'chat_id'        => $chat->id,
+            'response_length'=> strlen($aiContent ?? ''),
+            'finish_reason'  => $response->choices[0]->finishReason ?? null,
+        ]);
 
         $aiMessage = Message::create([
             'chat_id' => $chat->id,

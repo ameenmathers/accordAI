@@ -17,6 +17,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
@@ -309,6 +310,15 @@ class ChatController extends Controller
 
         $shouldRespond = $this->shouldAiRespond($validated['content'], $chat);
 
+        Log::info('[AI] sendMessage decision', [
+            'chat_id'        => $chat->id,
+            'user_id'        => $request->user()->id,
+            'message_length' => strlen($validated['content']),
+            'should_respond' => $shouldRespond,
+            'accept_header'  => $request->header('Accept'),
+            'streaming_path' => $request->header('Accept') === 'text/event-stream',
+        ]);
+
         // Streaming path: client sends Accept: text/event-stream → stream tokens in real time
         // (skips the synchronous mediate() call — mediateStreaming() saves the message itself)
         if ($request->header('Accept') === 'text/event-stream') {
@@ -320,18 +330,22 @@ class ChatController extends Controller
                 }
 
                 if ($shouldRespond) {
+                    Log::info('[AI] starting streaming mediation', ['chat_id' => $chat->id]);
                     try {
                         $aiReasoningService->mediateStreaming($chat, function ($token) {
                             echo 'data: '.json_encode(['token' => $token])."\n\n";
                             flush();
                         });
+                        Log::info('[AI] streaming mediation completed', ['chat_id' => $chat->id]);
                     } catch (\Throwable $e) {
-                        \Illuminate\Support\Facades\Log::error('AI streaming failed', [
+                        Log::error('[AI] streaming mediation failed', [
                             'chat_id' => $chat->id,
-                            'error' => $e->getMessage(),
-                            'trace' => $e->getTraceAsString(),
+                            'error'   => $e->getMessage(),
+                            'trace'   => $e->getTraceAsString(),
                         ]);
                     }
+                } else {
+                    Log::info('[AI] skipped response (shouldRespond=false, streaming path)', ['chat_id' => $chat->id]);
                 }
 
                 echo "data: [DONE]\n\n";
@@ -345,11 +359,19 @@ class ChatController extends Controller
 
         // Non-streaming fallback: call mediate() synchronously
         if ($shouldRespond) {
+            Log::info('[AI] starting non-streaming mediation', ['chat_id' => $chat->id]);
             try {
                 $this->aiReasoningService->mediate($chat);
-            } catch (\Throwable) {
-                // Non-fatal: user message is saved
+                Log::info('[AI] non-streaming mediation completed', ['chat_id' => $chat->id]);
+            } catch (\Throwable $e) {
+                Log::error('[AI] non-streaming mediation failed', [
+                    'chat_id' => $chat->id,
+                    'error'   => $e->getMessage(),
+                    'trace'   => $e->getTraceAsString(),
+                ]);
             }
+        } else {
+            Log::info('[AI] skipped response (shouldRespond=false, non-streaming path)', ['chat_id' => $chat->id]);
         }
 
         if ($request->wantsJson()) {

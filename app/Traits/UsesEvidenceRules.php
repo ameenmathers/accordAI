@@ -3,6 +3,7 @@
 namespace App\Traits;
 
 use App\Models\Chat;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Provides evidence-based rules and frameworks that the AI uses to validate
@@ -56,12 +57,14 @@ trait UsesEvidenceRules
         $trimmed = trim($messageContent);
 
         if (strlen($trimmed) < 1) {
+            Log::info('[AI] shouldAiRespond=false (empty message)', ['chat_id' => $chat->id]);
             return false;
         }
 
         // Always respond to conflict indicators regardless of other rules
         foreach (['disagree', 'wrong', 'unfair', 'upset', 'angry', 'frustrated', 'problem', 'issue', 'never', 'always'] as $keyword) {
             if (stripos($trimmed, $keyword) !== false) {
+                Log::info('[AI] shouldAiRespond=true (conflict keyword)', ['chat_id' => $chat->id, 'keyword' => $keyword]);
                 return true;
             }
         }
@@ -71,10 +74,12 @@ trait UsesEvidenceRules
         if (mb_strlen($trimmed) <= 20 && in_array(strtolower($trimmed), $acks, true)) {
             $lastMessage = $chat->messages()->latest()->first();
             if ($lastMessage && $lastMessage->sender_type === 'ai') {
+                Log::info('[AI] shouldAiRespond=false (ack after AI message)', ['chat_id' => $chat->id, 'message' => $trimmed]);
                 return false;
             }
         }
 
+        Log::info('[AI] shouldAiRespond=true (default)', ['chat_id' => $chat->id]);
         return true;
     }
 
