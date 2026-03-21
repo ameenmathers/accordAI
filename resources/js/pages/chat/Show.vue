@@ -57,7 +57,12 @@ const props = defineProps<{
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function getCsrf(): string {
-    return (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content ?? '';
+    const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : '';
+}
+
+function csrfHeader(): Record<string, string> {
+    return { 'X-XSRF-TOKEN': getCsrf() };
 }
 
 // ── Sound ────────────────────────────────────────────────────────────────────
@@ -147,7 +152,7 @@ async function subscribeToPush() {
         const json = sub.toJSON();
         await fetch('/push/subscribe', {
             method: 'POST',
-            headers: { 'X-CSRF-TOKEN': getCsrf(), 'Content-Type': 'application/json', Accept: 'application/json' },
+            headers: { ...csrfHeader(), 'Content-Type': 'application/json', Accept: 'application/json' },
             body: JSON.stringify({ endpoint: sub.endpoint, p256dh_key: json.keys?.p256dh, auth_key: json.keys?.auth }),
         });
     } catch { /* non-fatal */ }
@@ -181,7 +186,7 @@ async function sendMessage() {
     try {
         const res = await fetch(`/chats/${props.chat.id}/messages`, {
             method: 'POST',
-            headers: { 'X-CSRF-TOKEN': getCsrf(), 'Accept': 'text/event-stream', 'Content-Type': 'application/json' },
+            headers: { ...csrfHeader(), 'Accept': 'text/event-stream', 'Content-Type': 'application/json' },
             body: JSON.stringify({ content }),
         });
 
@@ -264,7 +269,7 @@ let lastTypedAt = 0;
 function onInput() {
     if (Date.now() - lastTypedAt < 2000) return;
     lastTypedAt = Date.now();
-    fetch(`/chats/${props.chat.id}/typing`, { method: 'POST', headers: { 'X-CSRF-TOKEN': getCsrf(), Accept: 'application/json', 'Content-Type': 'application/json' } }).catch(() => {});
+    fetch(`/chats/${props.chat.id}/typing`, { method: 'POST', headers: { ...csrfHeader(), Accept: 'application/json', 'Content-Type': 'application/json' } }).catch(() => {});
 }
 
 async function pollTyping() {
@@ -300,7 +305,7 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let onlineTimer: ReturnType<typeof setInterval> | null = null;
 
 function sendHeartbeat() {
-    fetch(`/chats/${props.chat.id}/heartbeat`, { method: 'POST', headers: { 'X-CSRF-TOKEN': getCsrf(), Accept: 'application/json', 'Content-Type': 'application/json' } }).catch(() => {});
+    fetch(`/chats/${props.chat.id}/heartbeat`, { method: 'POST', headers: { ...csrfHeader(), Accept: 'application/json', 'Content-Type': 'application/json' } }).catch(() => {});
 }
 
 async function pollOnline() {
@@ -371,7 +376,7 @@ async function generateInviteLink() {
     try {
         const res = await fetch(`/chats/${props.chat.id}/invite-link`, {
             method: 'POST',
-            headers: { 'X-CSRF-TOKEN': getCsrf(), Accept: 'application/json', 'Content-Type': 'application/json' },
+            headers: { ...csrfHeader(), Accept: 'application/json', 'Content-Type': 'application/json' },
         });
         inviteLink.value = (await res.json()).url;
     } catch { /* non-fatal */ }
