@@ -6,62 +6,44 @@ use App\Models\Chat;
 use App\Traits\UsesConversationContext;
 
 /**
- * Assembles the full context payload for AI mediation calls.
- * Now includes participation balance stats so the AI knows
- * who is dominating the conversation and who needs more voice.
+ * Assembles context payloads for AI calls.
+ *
+ * Three build modes:
+ *  - build()                  — full context for mediation responses (30 messages)
+ *  - buildLightweight()       — minimal context for triage calls (last 10 messages)
+ *  - buildForMemoryExtraction() — full transcript for Claude memory extraction
  */
 class ChatContextBuilder
 {
     use UsesConversationContext;
 
     /**
-     * Build the complete context for a mediation call.
-     *
-     * Returns:
-     * - chat:                 basic chat metadata
-     * - participants:         list of human participants
-     * - messages:             last N messages for prompt injection
-     * - context_notes:        stored behavioral traits from past sessions
-     * - participation_stats:  per-user message counts and balance notes
+     * Full context for a mediation call.
      */
-    public function build(Chat $chat, int $messageLimit = 20): array
+    public function build(Chat $chat): array
     {
         $participants = $this->loadParticipants($chat);
-        $messages = $this->loadRecentMessages($chat, $messageLimit);
-        $totalMessageCount = $chat->messages()->count();
-
-        $stage = match (true) {
-            $totalMessageCount <= 4  => 'opening',
-            $totalMessageCount <= 14 => 'active',
-            default                  => 'deep',
-        };
-
-        // For long chats: pass the boundary ID so AiReasoningService can summarise older context
-        $olderBoundaryId = ($totalMessageCount > $messageLimit && ! empty($messages))
-            ? ($messages[0]['id'] ?? null)
-            : null;
 
         return [
-            'chat' => [
-                'id' => $chat->id,
-                'context_type' => $chat->context_type,
-                'title' => $chat->title,
-                'status' => $chat->status,
-            ],
             'participants' => $participants,
-            'messages' => $messages,
+            'messages' => $this->loadRecentMessages($chat, 30),
             'context_notes' => $this->loadUserContextNotes($chat),
-            'participation_stats' => $this->analyzeParticipationBalance($participants, $messages),
-            'total_message_count' => $totalMessageCount,
-            'stage' => $stage,
-            'tone' => $this->detectTone($messages),
-            'agreements' => $this->detectAgreements($messages),
-            'older_boundary_id' => $olderBoundaryId,
         ];
     }
 
     /**
-     * Lighter context for Claude's memory extraction step after finalization.
+     * Lightweight context for triage calls — fewer messages, no context notes.
+     */
+    public function buildLightweight(Chat $chat): array
+    {
+        return [
+            'participants' => $this->loadParticipants($chat),
+            'messages' => $this->loadRecentMessages($chat, 10),
+        ];
+    }
+
+    /**
+     * Full transcript context for Claude's memory extraction.
      */
     public function buildForMemoryExtraction(Chat $chat): array
     {

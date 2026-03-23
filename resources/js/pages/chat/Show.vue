@@ -89,6 +89,15 @@ const localMessages = ref<Message[]>([...props.messages]);
 const messagesEndRef = ref<HTMLDivElement | null>(null);
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 const isAiThinking = ref(false);
+const isStreaming = ref(false);
+const isAccordListening = ref(false);
+let listeningTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function showListeningIndicator() {
+    isAccordListening.value = true;
+    if (listeningTimeout) clearTimeout(listeningTimeout);
+    listeningTimeout = setTimeout(() => { isAccordListening.value = false; }, 3000);
+}
 
 function scrollToBottom(force = false) {
     nextTick(() => { if (force || messagesEndRef.value) messagesEndRef.value?.scrollIntoView({ behavior: 'smooth' }); });
@@ -101,7 +110,8 @@ const lastMessageId = computed(() => {
 
 function mergeMessages(incoming: Message[]) {
     const existingRealIds = new Set(localMessages.value.filter(m => m.id > 0).map(m => m.id));
-    const fresh = incoming.filter(m => !existingRealIds.has(m.id));
+    // During active streaming, skip incoming AI messages to avoid duplicating the streamed response
+    const fresh = incoming.filter(m => !existingRealIds.has(m.id) && !(isStreaming.value && m.sender_type === 'ai'));
     if (!fresh.length) return;
 
     for (const real of fresh) {
@@ -199,35 +209,46 @@ async function sendMessage() {
         }
 
         if (res.headers.get('content-type')?.includes('text/event-stream') && res.body) {
+            isStreaming.value = true;
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '', aiContent = '';
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() ?? '';
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    const data = line.slice(6).trim();
-                    if (data === '[DONE]') { isAiThinking.value = false; if (streamingAiAdded) playSound(); break; }
-                    try {
-                        const { token } = JSON.parse(data) as { token?: string };
-                        if (token) {
-                            aiContent += token;
-                            if (!streamingAiAdded) {
-                                localMessages.value.push({ id: aiTempId, sender_type: 'ai', sender: null, content: aiContent, created_at: new Date().toISOString() });
-                                streamingAiAdded = true; isAiThinking.value = false;
-                            } else {
-                                const idx = localMessages.value.findIndex(m => m.id === aiTempId);
-                                if (idx !== -1) localMessages.value[idx] = { ...localMessages.value[idx], content: aiContent };
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() ?? '';
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const data = line.slice(6).trim();
+                        if (data === '[DONE]') { isAiThinking.value = false; if (streamingAiAdded) playSound(); break; }
+                        try {
+                            const parsed = JSON.parse(data) as { token?: string; listening?: boolean };
+                            if (parsed.listening) {
+                                isAiThinking.value = false;
+                                showListeningIndicator();
+                                continue;
                             }
-                            scrollToBottom();
-                        }
-                    } catch { /* skip */ }
+                            const token = parsed.token;
+                            if (token) {
+                                aiContent += token;
+                                if (!streamingAiAdded) {
+                                    localMessages.value.push({ id: aiTempId, sender_type: 'ai', sender: null, content: aiContent, created_at: new Date().toISOString() });
+                                    streamingAiAdded = true; isAiThinking.value = false;
+                                } else {
+                                    const idx = localMessages.value.findIndex(m => m.id === aiTempId);
+                                    if (idx !== -1) localMessages.value[idx] = { ...localMessages.value[idx], content: aiContent };
+                                }
+                                scrollToBottom();
+                            }
+                        } catch { /* skip */ }
+                    }
                 }
+            } finally {
+                isStreaming.value = false;
             }
         } else { isAiThinking.value = false; }
     } catch {
@@ -602,6 +623,14 @@ const headerOnline = computed(() => headerParticipant.value ? onlineUserIds.valu
                         </div>
                     </div>
                 </div>
+
+                <!-- Accord is listening (subtle indicator) -->
+                <Transition enter-active-class="transition-opacity duration-300" leave-active-class="transition-opacity duration-500" enter-from-class="opacity-0" leave-to-class="opacity-0">
+                    <div v-if="isAccordListening && !isAiThinking" class="flex items-center gap-2 pl-10 text-xs text-violet-400">
+                        <Sparkles class="h-3 w-3" />
+                        <span>Accord is listening...</span>
+                    </div>
+                </Transition>
             </div>
 
             <div ref="messagesEndRef" />

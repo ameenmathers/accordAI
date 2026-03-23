@@ -64,6 +64,7 @@ const useInviteLink = ref(false);
 const form = useForm({
     context_type: 'general',
     title: '',
+    creator_context: '',
     invitee_usernames: [] as string[],
     use_invite_link: false,
 });
@@ -356,6 +357,11 @@ function truncate(text: string, max = 42): string {
                     <div>
                         <label class="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-500">Title <span class="normal-case text-gray-300">(optional)</span></label>
                         <input v-model="form.title" type="text" placeholder="e.g. Budget planning disagreement" class="block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-300 focus:border-violet-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-100 transition" />
+                    </div>
+
+                    <div>
+                        <label class="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-500">What's this about? <span class="normal-case text-gray-300">(optional)</span></label>
+                        <textarea v-model="form.creator_context" rows="2" placeholder="Briefly describe the issue — Accord will use this as context" class="block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-300 focus:border-violet-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-100 transition resize-none" />
                     </div>
 
                     <div>

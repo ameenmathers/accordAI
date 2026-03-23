@@ -7,10 +7,12 @@ use App\Jobs\CheckChatEngagement;
 use App\Mail\ChatInvitationMail;
 use App\Models\Chat;
 use App\Models\ChatInvitation;
+use App\Models\ChatSession;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\AiMemoryService;
 use App\Services\AiReasoningService;
+use App\Services\MediationAssessmentService;
 use App\Traits\UsesEvidenceRules;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -29,7 +31,8 @@ class ChatController extends Controller
 
     public function __construct(
         private readonly AiReasoningService $aiReasoningService,
-        private readonly AiMemoryService $aiMemoryService
+        private readonly AiMemoryService $aiMemoryService,
+        private readonly MediationAssessmentService $assessmentService,
     ) {}
 
     /**
@@ -85,7 +88,6 @@ class ChatController extends Controller
 
     /**
      * List all chats the user participates in.
-     * GET /chats
      */
     public function index(Request $request): Response
     {
@@ -106,13 +108,13 @@ class ChatController extends Controller
 
     /**
      * Create a new chat and invite participants by username.
-     * POST /chats
      */
     public function store(Request $request): RedirectResponse
     {
         $validated = $request->validate([
             'context_type' => ['required', 'string', 'in:relationship,business,family,financial,legal,general'],
             'title' => ['nullable', 'string', 'max:255'],
+            'creator_context' => ['nullable', 'string', 'max:2000'],
             'invitee_usernames' => ['nullable', 'array', 'max:2'],
             'invitee_usernames.*' => ['string', 'max:255'],
             'use_invite_link' => ['nullable', 'boolean'],
@@ -129,9 +131,21 @@ class ChatController extends Controller
 
         $status = $invitees->isNotEmpty() ? 'waiting' : 'active';
 
+        // If creator provided context, use it as the locked topic summary
+        $creatorContext = $validated['creator_context'] ?? null;
+        $topicSummary = null;
+        $topicLocked = false;
+        if (! empty($creatorContext)) {
+            $topicSummary = $creatorContext;
+            $topicLocked = true;
+        }
+
         $chat = Chat::create([
             'context_type' => $validated['context_type'],
             'title' => $validated['title'] ?? null,
+            'creator_context' => $creatorContext,
+            'topic_summary' => $topicSummary,
+            'topic_locked' => $topicLocked,
             'created_by' => $request->user()->id,
             'status' => $status,
         ]);
@@ -152,7 +166,6 @@ class ChatController extends Controller
             }
         }
 
-        // Optionally auto-generate a shareable invite link (when no usernames given)
         $inviteUrl = null;
         if (($validated['use_invite_link'] ?? false) && $invitees->isEmpty()) {
             $link = ChatInvitation::create([
@@ -168,7 +181,6 @@ class ChatController extends Controller
 
     /**
      * Show the chat room with messages.
-     * GET /chats/{chat}
      */
     public function show(Request $request, Chat $chat): Response|RedirectResponse
     {
@@ -191,7 +203,6 @@ class ChatController extends Controller
 
         $chat->load(['creator:id,name', 'participants:id,name', 'pendingInvitations.invitedUser:id,name,username']);
 
-        // Mark current user as having read all messages on page load
         $userId = $request->user()->id;
         if ($messages->isNotEmpty()) {
             $lastId = $messages->last()['id'];
@@ -234,7 +245,6 @@ class ChatController extends Controller
 
     /**
      * Generate a shareable invite link for this chat (creator only).
-     * POST /chats/{chat}/invite-link
      */
     public function generateInviteLink(Request $request, Chat $chat): JsonResponse
     {
@@ -257,8 +267,7 @@ class ChatController extends Controller
     }
 
     /**
-     * Send a message and trigger AI mediation.
-     * POST /chats/{chat}/messages
+     * Send a message and trigger AI triage → respond/listen.
      */
     public function sendMessage(Request $request, Chat $chat): StreamedResponse|RedirectResponse|JsonResponse
     {
@@ -278,6 +287,7 @@ class ChatController extends Controller
             'content' => ['required', 'string', 'max:5000'],
         ]);
 
+        // 1. Persist the user's message
         $userMessage = Message::create([
             'chat_id' => $chat->id,
             'sender_type' => 'user',
@@ -293,59 +303,71 @@ class ChatController extends Controller
                 'content' => $userMessage->content,
                 'created_at' => $userMessage->created_at->toISOString(),
             ]))->toOthers();
-        } catch (\Throwable) { /* non-fatal: Reverb may not be running */ }
+        } catch (\Throwable) { /* non-fatal */ }
 
-        // Proactive re-engagement: if the chat goes quiet for 10 min, Accord will check in
+        // 2. Increment human message count and trigger assessment if due
+        $chat->increment('human_message_count');
+
+        try {
+            $this->assessmentService->assessIfDue($chat);
+        } catch (\Throwable) { /* non-fatal */ }
+
+        // 3. Proactive re-engagement check
         CheckChatEngagement::dispatch($chat->id, $userMessage->id)->delay(now()->addMinutes(10));
 
-        // Auto-extract insights every 20 user messages (threshold-based memory)
+        // 4. Auto-extract insights every 20 user messages
         $userMessageCount = $chat->messages()->where('sender_type', 'user')->count();
         if ($userMessageCount > 0 && $userMessageCount % 20 === 0) {
             try {
                 $this->aiMemoryService->extractAndStoreMemory($chat);
-            } catch (\Throwable) {
-                // Non-fatal
-            }
+            } catch (\Throwable) { /* non-fatal */ }
         }
 
-        $shouldRespond = $this->shouldAiRespond($validated['content'], $chat);
+        // 5. Triage: should Accord respond or listen?
+        $triageResult = $this->aiReasoningService->triage($chat);
+
+        // Concurrency lock
+        $lockKey = "chat_ai_responding_{$chat->id}";
+        if ($triageResult === 'respond' && Cache::has($lockKey)) {
+            Log::info('[AI] triage overridden (concurrency lock)', ['chat_id' => $chat->id]);
+            $triageResult = 'listen';
+        }
 
         Log::info('[AI] sendMessage decision', [
-            'chat_id'        => $chat->id,
-            'user_id'        => $request->user()->id,
-            'message_length' => strlen($validated['content']),
-            'should_respond' => $shouldRespond,
-            'accept_header'  => $request->header('Accept'),
-            'streaming_path' => $request->header('Accept') === 'text/event-stream',
+            'chat_id' => $chat->id,
+            'user_id' => $request->user()->id,
+            'triage' => $triageResult,
+            'streaming' => $request->header('Accept') === 'text/event-stream',
         ]);
 
-        // Streaming path: client sends Accept: text/event-stream → stream tokens in real time
-        // (skips the synchronous mediate() call — mediateStreaming() saves the message itself)
+        // 6. Streaming path
         if ($request->header('Accept') === 'text/event-stream') {
             $aiReasoningService = $this->aiReasoningService;
 
-            return response()->stream(function () use ($chat, $shouldRespond, $aiReasoningService) {
+            return response()->stream(function () use ($chat, $triageResult, $aiReasoningService, $lockKey) {
                 while (ob_get_level() > 0) {
                     ob_end_clean();
                 }
 
-                if ($shouldRespond) {
-                    Log::info('[AI] starting streaming mediation', ['chat_id' => $chat->id]);
+                if ($triageResult === 'respond') {
+                    Cache::put($lockKey, true, 120);
                     try {
                         $aiReasoningService->mediateStreaming($chat, function ($token) {
                             echo 'data: '.json_encode(['token' => $token])."\n\n";
                             flush();
                         });
-                        Log::info('[AI] streaming mediation completed', ['chat_id' => $chat->id]);
                     } catch (\Throwable $e) {
                         Log::error('[AI] streaming mediation failed', [
                             'chat_id' => $chat->id,
-                            'error'   => $e->getMessage(),
-                            'trace'   => $e->getTraceAsString(),
+                            'error' => $e->getMessage(),
                         ]);
+                    } finally {
+                        Cache::forget($lockKey);
                     }
                 } else {
-                    Log::info('[AI] skipped response (shouldRespond=false, streaming path)', ['chat_id' => $chat->id]);
+                    // LISTEN: send listening indicator
+                    echo 'data: '.json_encode(['listening' => true])."\n\n";
+                    flush();
                 }
 
                 echo "data: [DONE]\n\n";
@@ -357,21 +379,19 @@ class ChatController extends Controller
             ]);
         }
 
-        // Non-streaming fallback: call mediate() synchronously
-        if ($shouldRespond) {
-            Log::info('[AI] starting non-streaming mediation', ['chat_id' => $chat->id]);
+        // 7. Non-streaming fallback
+        if ($triageResult === 'respond') {
+            Cache::put($lockKey, true, 120);
             try {
                 $this->aiReasoningService->mediate($chat);
-                Log::info('[AI] non-streaming mediation completed', ['chat_id' => $chat->id]);
             } catch (\Throwable $e) {
                 Log::error('[AI] non-streaming mediation failed', [
                     'chat_id' => $chat->id,
-                    'error'   => $e->getMessage(),
-                    'trace'   => $e->getTraceAsString(),
+                    'error' => $e->getMessage(),
                 ]);
+            } finally {
+                Cache::forget($lockKey);
             }
-        } else {
-            Log::info('[AI] skipped response (shouldRespond=false, non-streaming path)', ['chat_id' => $chat->id]);
         }
 
         if ($request->wantsJson()) {
@@ -383,7 +403,6 @@ class ChatController extends Controller
 
     /**
      * Finalize a chat (creator only).
-     * POST /chats/{chat}/finalize
      */
     public function finalize(Request $request, Chat $chat): RedirectResponse
     {
@@ -395,36 +414,58 @@ class ChatController extends Controller
             return back()->with('error', 'Already finalized.');
         }
 
-        $chat->update(['status' => 'finalized']);
+        $chat->update(['status' => 'finalized', 'mediation_phase' => 'closing']);
 
-        // Closing ritual: Accord sends a final message before memory extraction
+        // Run final assessment
+        $finalAssessment = null;
+        try {
+            $finalAssessment = $this->assessmentService->assess($chat);
+        } catch (\Exception) { /* non-fatal */ }
+
+        // Closing ritual
         try {
             $this->aiReasoningService->closingRitual($chat);
-        } catch (\Exception) {
-            // Non-fatal
-        }
+        } catch (\Exception) { /* non-fatal */ }
 
+        // Memory extraction
         try {
             $this->aiMemoryService->extractAndStoreMemory($chat);
-        } catch (\Exception $e) {
-            // Memory extraction failed but finalization succeeded
-        }
+        } catch (\Exception) { /* non-fatal */ }
 
+        // Generate and persist session summary
         $summary = '';
         try {
             $summary = $this->aiReasoningService->generateSummary($chat);
-        } catch (\Exception $e) {
-            // Non-fatal — finalization still succeeded
-        }
+            if (! empty($summary)) {
+                $chat->update(['session_summary' => $summary]);
+            }
+        } catch (\Exception) { /* non-fatal */ }
+
+        // Create cross-session memory record
+        try {
+            $participantIds = $chat->participants()->pluck('users.id')->sort()->values()->toArray();
+            ChatSession::create([
+                'chat_id' => $chat->id,
+                'topic_summary' => $chat->topic_summary ?? 'General discussion',
+                'session_summary' => $summary ?: 'Session completed.',
+                'resolved_issues' => $finalAssessment?->resolved_agreements ?? [],
+                'unresolved_issues' => $finalAssessment
+                    ? collect($finalAssessment->sub_issues ?? [])
+                        ->where('status', '!=', 'resolved')
+                        ->pluck('label')
+                        ->values()
+                        ->toArray()
+                    : [],
+                'participant_ids' => $participantIds,
+            ]);
+        } catch (\Exception) { /* non-fatal */ }
 
         return redirect()->route('chats.show', $chat->id)
             ->with('session_summary', $summary);
     }
 
-    /**
-     * Heartbeat — records that the current user is present in this chat.
-     * POST /chats/{chat}/heartbeat
-     */
+    // ── Heartbeat, Online, Polling, Typing (unchanged) ────────────────────
+
     public function heartbeat(Request $request, Chat $chat): JsonResponse
     {
         if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {
@@ -433,15 +474,11 @@ class ChatController extends Controller
 
         $userId = $request->user()->id;
         Cache::put("chat_online_{$chat->id}_{$userId}", true, 35);
-        Cache::put("user_online_{$userId}", true, 35); // global — used by chat list
+        Cache::put("user_online_{$userId}", true, 35);
 
         return response()->json(['ok' => true]);
     }
 
-    /**
-     * Returns the IDs of participants currently online.
-     * GET /chats/{chat}/online
-     */
     public function online(Request $request, Chat $chat): JsonResponse
     {
         if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {
@@ -455,10 +492,6 @@ class ChatController extends Controller
         return response()->json($onlineIds);
     }
 
-    /**
-     * Poll for new messages after a given message ID.
-     * GET /chats/{chat}/messages?after={id}
-     */
     public function pollMessages(Request $request, Chat $chat): JsonResponse
     {
         if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {
@@ -481,14 +514,12 @@ class ChatController extends Controller
                 'created_at' => $msg->created_at->toISOString(),
             ]);
 
-        // Auto mark-read: user is actively polling = they're looking at the chat
         if ($messages->isNotEmpty()) {
             $lastId = $messages->last()['id'];
             Cache::put("chat_read_{$chat->id}_{$userId}", $lastId, 86400);
             $chat->participants()->updateExistingPivot($userId, ['last_read_message_id' => $lastId]);
         }
 
-        // Read status for all participants (last message ID each has read)
         $readStatus = $chat->participants()->pluck('users.id')
             ->mapWithKeys(fn ($pid) => [$pid => Cache::get("chat_read_{$chat->id}_{$pid}", 0)])
             ->all();
@@ -500,10 +531,6 @@ class ChatController extends Controller
         ]);
     }
 
-    /**
-     * Record that the current user is typing.
-     * POST /chats/{chat}/typing
-     */
     public function recordTyping(Request $request, Chat $chat): JsonResponse
     {
         if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {
@@ -521,10 +548,6 @@ class ChatController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    /**
-     * Get users currently typing (excluding self).
-     * GET /chats/{chat}/typing
-     */
     public function getTyping(Request $request, Chat $chat): JsonResponse
     {
         if (! $chat->participants()->where('user_id', $request->user()->id)->exists()) {

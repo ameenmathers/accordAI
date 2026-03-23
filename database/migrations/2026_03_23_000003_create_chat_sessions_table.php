@@ -1,0 +1,29 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('chat_sessions', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('chat_id')->constrained()->cascadeOnDelete();
+            $table->text('topic_summary');
+            $table->text('session_summary');
+            $table->json('resolved_issues')->nullable();
+            $table->json('unresolved_issues')->nullable();
+            $table->json('participant_ids');
+            $table->timestamps();
+
+            $table->index('chat_id');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('chat_sessions');
+    }
+};

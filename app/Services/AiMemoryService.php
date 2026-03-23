@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Log;
  * chats to give the AI richer context about each participant.
  *
  * Why Claude for memory? Claude excels at nuanced summarization and
- * structured extraction tasks, complementing OpenAI's reasoning role.
+ * structured extraction tasks.
  */
 class AiMemoryService
 {
@@ -26,7 +26,7 @@ class AiMemoryService
 
     private const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 
-    private const CLAUDE_MODEL = 'claude-opus-4-6';
+    private const CLAUDE_MODEL = 'claude-sonnet-4-6';
 
     public function __construct(
         private readonly ChatContextBuilder $contextBuilder

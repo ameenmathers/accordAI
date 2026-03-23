@@ -7,22 +7,20 @@ use App\Models\Chat;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\AiReasoningService;
+use App\Services\MediationAssessmentService;
 use App\Traits\UsesEvidenceRules;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
-/**
- * Handles sending messages and retrieving chat history for the REST API.
- *
- * GET  /api/chats/{id}/messages — paginated message history
- * POST /api/chats/{id}/messages — send a user message + trigger AI response
- */
 class MessageController extends Controller
 {
     use UsesEvidenceRules;
 
     public function __construct(
-        private readonly AiReasoningService $aiReasoningService
+        private readonly AiReasoningService $aiReasoningService,
+        private readonly MediationAssessmentService $assessmentService,
     ) {}
 
     /**
@@ -48,10 +46,7 @@ class MessageController extends Controller
     }
 
     /**
-     * Store a user message and synchronously trigger the AI mediator response.
-     *
-     * Returns both the user message and the AI response so the client
-     * can display them immediately without a second request.
+     * Store a user message and trigger AI triage → respond/listen.
      */
     public function store(Request $request, Chat $chat): JsonResponse
     {
@@ -75,29 +70,49 @@ class MessageController extends Controller
 
         $userMessage->load('sender:id,name');
 
-        // 2. Determine if AI should respond to this message
-        if (! $this->shouldAiRespond($validated['content'])) {
+        // 2. Increment human message count and trigger assessment if due
+        $chat->increment('human_message_count');
+
+        try {
+            $this->assessmentService->assessIfDue($chat);
+        } catch (\Throwable) { /* non-fatal */ }
+
+        // 3. Triage: should Accord respond or listen?
+        $triageResult = $this->aiReasoningService->triage($chat);
+
+        // Concurrency lock
+        $lockKey = "chat_ai_responding_{$chat->id}";
+        if ($triageResult === 'respond' && Cache::has($lockKey)) {
+            $triageResult = 'listen';
+        }
+
+        if ($triageResult !== 'respond') {
             return response()->json([
                 'user_message' => $this->formatMessage($userMessage),
                 'ai_message' => null,
+                'listening' => $triageResult === 'listen',
             ], 201);
         }
 
-        // 3. Trigger AI mediation synchronously (no queue needed for now)
+        // 4. Respond
+        Cache::put($lockKey, true, 120);
         try {
             $aiMessage = $this->aiReasoningService->mediate($chat);
 
             return response()->json([
                 'user_message' => $this->formatMessage($userMessage),
-                'ai_message' => $this->formatMessage($aiMessage),
+                'ai_message' => $aiMessage ? $this->formatMessage($aiMessage) : null,
             ], 201);
         } catch (\Exception $e) {
-            // AI failure is non-fatal — the user's message was already saved
+            Log::error('[AI] API mediation failed', ['chat_id' => $chat->id, 'error' => $e->getMessage()]);
+
             return response()->json([
                 'user_message' => $this->formatMessage($userMessage),
                 'ai_message' => null,
                 'ai_error' => 'AI mediator temporarily unavailable.',
             ], 201);
+        } finally {
+            Cache::forget($lockKey);
         }
     }
 

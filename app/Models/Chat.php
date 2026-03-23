@@ -13,12 +13,20 @@ class Chat extends Model
     protected $fillable = [
         'context_type',
         'title',
+        'topic_summary',
+        'topic_locked',
+        'mediation_phase',
+        'session_summary',
+        'human_message_count',
+        'creator_context',
         'created_by',
         'status',
     ];
 
     protected $casts = [
         'status' => 'string',
+        'topic_locked' => 'boolean',
+        'human_message_count' => 'integer',
     ];
 
     public function creator(): BelongsTo
@@ -75,5 +83,20 @@ class Chat extends Model
     public function isFinalized(): bool
     {
         return $this->status === 'finalized';
+    }
+
+    public function assessments(): HasMany
+    {
+        return $this->hasMany(ChatAssessment::class)->orderBy('at_message_count');
+    }
+
+    public function latestAssessment(): HasOne
+    {
+        return $this->hasOne(ChatAssessment::class)->latestOfMany();
+    }
+
+    public function session(): HasOne
+    {
+        return $this->hasOne(ChatSession::class);
     }
 }

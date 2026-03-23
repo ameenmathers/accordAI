@@ -5,43 +5,233 @@ namespace App\Services;
 use App\Events\MessageSent;
 use App\Models\Chat;
 use App\Models\Message;
-use App\Services\AiMemoryService;
 use App\Traits\UsesAiPrompts;
-use App\Traits\UsesEvidenceRules;
-use Exception;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
-use OpenAI\Laravel\Facades\OpenAI;
 
 /**
- * Drives AI mediation using OpenAI GPT-4o.
+ * Drives AI mediation using Anthropic Claude Sonnet.
  *
- * The intelligence is in the prompt, not this class.
- * This class handles:
- *  - assembling context (participants, messages, memory, participation balance)
- *  - building the system + user prompts via UsesAiPrompts
- *  - calling OpenAI and persisting the response
+ * Core flow per message:
+ *  1. Hard PHP guard: skip if last 2 messages are both AI
+ *  2. Triage call: lightweight RESPOND/LISTEN decision
+ *  3. If LISTEN: send listening event to frontend, return
+ *  4. If RESPOND: build full context, stream mediation response
  *
- * The mediation prompt enforces 6 principles:
- *  1. Multi-user awareness
- *  2. Purpose anchoring
- *  3. Mediator identity (not a participant)
- *  4. Evidence-grounded advice
- *  5. Participation balance monitoring
- *  6. Response mode selection (CLARIFY/SUMMARIZE/ADVISE/DE-ESCALATE/REFRAME)
+ * Periodic assessment (MediationAssessmentService) runs every ~8 human messages
+ * and provides structured context about sub-issues, progress, and techniques.
  */
 class AiReasoningService
 {
-    use UsesAiPrompts, UsesEvidenceRules;
+    use UsesAiPrompts;
 
     public function __construct(
         private readonly ChatContextBuilder $contextBuilder,
+        private readonly AnthropicClient $anthropic,
+        private readonly CrossSessionMemoryService $crossSession,
         private readonly WebPushService $webPushService,
     ) {}
 
+    // ── TRIAGE ────────────────────────────────────────────────────────────
+
+    /**
+     * Decide whether Accord should respond or listen.
+     * Returns 'respond', 'listen', or 'skip' (hard PHP guard).
+     */
+    public function triage(Chat $chat): string
+    {
+        // Hard guard: if last 2 messages are both AI, never stack
+        $lastTwo = $chat->messages()->latest()->take(2)->get();
+        if ($lastTwo->count() === 2 && $lastTwo->every(fn ($m) => $m->sender_type === 'ai')) {
+            Log::info('[AI] triage=skip (AI stacking guard)', ['chat_id' => $chat->id]);
+
+            return 'skip';
+        }
+
+        $context = $this->contextBuilder->buildLightweight($chat);
+        $assessment = $chat->latestAssessment;
+
+        $triagePrompt = $this->getTriageSystemPrompt(
+            $chat->context_type,
+            array_column($context['participants'], 'name'),
+        );
+
+        $triageMessage = $this->buildTriageUserMessage($context['messages'], $assessment);
+
+        try {
+            $response = $this->anthropic->triage(
+                $triagePrompt,
+                [['role' => 'user', 'content' => $triageMessage]],
+            );
+
+            $response = trim($response);
+            Log::info('[AI] triage decision', ['chat_id' => $chat->id, 'response' => $response]);
+
+            if (str_starts_with(strtoupper($response), 'RESPOND')) {
+                return 'respond';
+            }
+
+            return 'listen';
+        } catch (\Exception $e) {
+            Log::error('[AI] triage failed, defaulting to respond', [
+                'chat_id' => $chat->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            // On triage failure, default to responding (safer than silence)
+            return 'respond';
+        }
+    }
+
+    // ── STREAMING MEDIATION ───────────────────────────────────────────────
+
+    /**
+     * Stream a mediation response token-by-token via a callback, then persist.
+     * Only called when triage returns 'respond'.
+     */
+    public function mediateStreaming(Chat $chat, \Closure $onToken): void
+    {
+        $context = $this->contextBuilder->build($chat);
+        $participantNames = array_column($context['participants'], 'name');
+        $assessment = $chat->latestAssessment;
+        $priorSessions = $this->crossSession->getPriorSessions($chat);
+
+        $systemPrompt = $this->getMediatorSystemPrompt($chat->context_type, $participantNames);
+
+        $contextBlock = $this->buildContextBlock(
+            $chat->context_type,
+            $chat->mediation_phase,
+            $chat->topic_summary,
+            $chat->creator_context,
+            $assessment,
+            $priorSessions,
+            $context['context_notes'],
+            $context['participants'],
+        );
+
+        $messages = $this->buildAlternatingTurns($contextBlock, $context['messages']);
+
+        Log::info('[AI] mediateStreaming: calling Anthropic', [
+            'chat_id' => $chat->id,
+            'participants' => $participantNames,
+            'phase' => $chat->mediation_phase,
+            'has_assessment' => $assessment !== null,
+            'turn_count' => count($messages),
+        ]);
+
+        $fullContent = $this->anthropic->stream(
+            $systemPrompt,
+            $messages,
+            maxTokens: 1024,
+            temperature: 0.7,
+            onToken: $onToken,
+        );
+
+        Log::info('[AI] mediateStreaming: stream finished', [
+            'chat_id' => $chat->id,
+            'response_length' => strlen($fullContent),
+        ]);
+
+        if ($fullContent !== '' && $this->isRepetitive($chat, $fullContent)) {
+            Log::info('[AI] mediateStreaming: repetitive, regenerating', ['chat_id' => $chat->id]);
+            $varied = $this->regenerateWithVariation($systemPrompt, $messages);
+            if (! empty($varied)) {
+                $fullContent = $varied;
+            }
+        }
+
+        if ($fullContent !== '') {
+            $this->persistAndBroadcast($chat, $fullContent);
+        }
+    }
+
+    // ── NON-STREAMING MEDIATION ───────────────────────────────────────────
+
+    /**
+     * Generate and persist an AI mediation response (non-streaming).
+     */
+    public function mediate(Chat $chat): ?Message
+    {
+        $context = $this->contextBuilder->build($chat);
+        $participantNames = array_column($context['participants'], 'name');
+        $assessment = $chat->latestAssessment;
+        $priorSessions = $this->crossSession->getPriorSessions($chat);
+
+        $systemPrompt = $this->getMediatorSystemPrompt($chat->context_type, $participantNames);
+
+        $contextBlock = $this->buildContextBlock(
+            $chat->context_type,
+            $chat->mediation_phase,
+            $chat->topic_summary,
+            $chat->creator_context,
+            $assessment,
+            $priorSessions,
+            $context['context_notes'],
+            $context['participants'],
+        );
+
+        $messages = $this->buildAlternatingTurns($contextBlock, $context['messages']);
+
+        Log::info('[AI] mediate: calling Anthropic', [
+            'chat_id' => $chat->id,
+            'participants' => $participantNames,
+            'phase' => $chat->mediation_phase,
+        ]);
+
+        $aiContent = $this->anthropic->message($systemPrompt, $messages, maxTokens: 1024);
+
+        if ($aiContent && $this->isRepetitive($chat, $aiContent)) {
+            Log::info('[AI] mediate: repetitive, regenerating', ['chat_id' => $chat->id]);
+            $varied = $this->regenerateWithVariation($systemPrompt, $messages);
+            if (! empty($varied)) {
+                $aiContent = $varied;
+            }
+        }
+
+        if (empty($aiContent)) {
+            return null;
+        }
+
+        return $this->persistAndBroadcast($chat, $aiContent);
+    }
+
+    // ── ENGAGEMENT NUDGE ──────────────────────────────────────────────────
+
+    /**
+     * Send a short nudge when both participants have gone quiet for 10+ minutes.
+     */
+    public function sendEngagementNudge(Chat $chat): void
+    {
+        $context = $this->contextBuilder->buildLightweight($chat);
+        $participantNames = array_column($context['participants'], 'name');
+
+        $system = $this->getMediatorSystemPrompt($chat->context_type, $participantNames)
+            ."\n\nIMPORTANT: Both participants have gone quiet. Send a single warm sentence that gently re-engages them — reference something specific from the conversation. No question needed.";
+
+        $transcript = collect($context['messages'])->map(function ($msg) {
+            $label = $msg['sender_type'] === 'ai' ? 'Accord' : $msg['sender_name'];
+
+            return "[{$label}]: {$msg['content']}";
+        })->implode("\n");
+
+        $content = $this->anthropic->message(
+            $system,
+            [['role' => 'user', 'content' => $transcript]],
+            maxTokens: 80,
+            temperature: 0.8,
+        );
+
+        $content = trim($content);
+        if (empty($content)) {
+            return;
+        }
+
+        $this->persistAndBroadcast($chat, $content);
+    }
+
+    // ── SUMMARY & CLOSING ─────────────────────────────────────────────────
+
     /**
      * Generate a warm, readable summary of a finalized session.
-     * Covers what was discussed, what each person expressed, and any agreed next steps.
      */
     public function generateSummary(Chat $chat): string
     {
@@ -52,329 +242,15 @@ class AiReasoningService
             return '';
         }
 
-        $response = OpenAI::chat()->create([
-            'model' => 'gpt-4o',
-            'messages' => [
-                [
-                    'role' => 'system',
-                    'content' => 'You write warm, constructive summaries of mediation sessions. Be concise — 2–3 short paragraphs.',
-                ],
-                [
-                    'role' => 'user',
-                    'content' => "Summarize this mediation session between {$names}.\n\nCover:\n- What the session was about\n- What each person expressed\n- Any agreements or next steps suggested by Accord\n\nKeep it positive and forward-looking.\n\n{$context['transcript']}",
-                ],
-            ],
-            'max_tokens' => 350,
-            'temperature' => 0.7,
-        ]);
-
-        return trim($response->choices[0]->message->content ?? '');
-    }
-
-    /**
-     * Stream a mediation response token-by-token via a callback, then persist the complete message.
-     * Use inside Laravel's response()->stream() for real-time AI output.
-     */
-    public function mediateStreaming(Chat $chat, \Closure $onToken): void
-    {
-        $context = $this->contextBuilder->build($chat);
-        $participantNames = array_column($context['participants'], 'name');
-
-        $this->handleToneCacheAndMemory($chat, $context);
-
-        $systemPrompt = $this->getMediatorSystemPrompt($chat->context_type, $participantNames)
-            . $this->getEvidenceFrameworks($chat->context_type);
-
-        $rollingSummary = $this->maybeGetRollingSummary($chat, $context);
-
-        $userMessage = $this->buildMediationUserMessage(
-            $context['participants'],
-            $context['messages'],
-            $context['context_notes'],
-            $context['participation_stats'],
-            $context['stage'],
-            $context['tone'],
-            $context['total_message_count'],
-            $context['agreements'],
-            $rollingSummary
-        );
-
-        Log::info('[AI] mediateStreaming: calling OpenAI', [
-            'chat_id'          => $chat->id,
-            'participants'     => $participantNames,
-            'context_type'     => $chat->context_type,
-            'system_prompt_len'=> strlen($systemPrompt),
-            'user_msg_len'     => strlen($userMessage),
-        ]);
-
-        $stream = OpenAI::chat()->createStreamed([
-            'model' => 'gpt-4o',
-            'messages' => [
-                ['role' => 'system', 'content' => $systemPrompt],
-                ['role' => 'user', 'content' => $userMessage],
-            ],
-            'max_tokens' => 700,
-            'temperature' => 0.85,
-        ]);
-
-        $fullContent = '';
-        foreach ($stream as $response) {
-            $token = $response->choices[0]->delta->content ?? '';
-            if ($token !== '') {
-                $fullContent .= $token;
-                $onToken($token);
-            }
-        }
-
-        Log::info('[AI] mediateStreaming: stream finished', [
-            'chat_id'        => $chat->id,
-            'response_length'=> strlen($fullContent),
-            'has_content'    => $fullContent !== '',
-        ]);
-
-        if ($fullContent !== '') {
-            $aiMessage = Message::create([
-                'chat_id' => $chat->id,
-                'sender_type' => 'ai',
-                'sender_id' => null,
-                'content' => $fullContent,
-            ]);
-
-            try {
-                broadcast(new MessageSent($chat->id, [
-                    'id' => $aiMessage->id,
-                    'sender_type' => 'ai',
-                    'sender' => null,
-                    'content' => $fullContent,
-                    'created_at' => $aiMessage->created_at->toISOString(),
-                ]));
-            } catch (\Exception) { /* non-fatal: Reverb may not be running */ }
-
-            // Background push to all participants (for those not currently online)
-            $participantIds = $chat->participants()->pluck('users.id')->toArray();
-            try {
-                $this->webPushService->sendToUsers(
-                    $participantIds,
-                    'Accord',
-                    mb_substr($fullContent, 0, 120),
-                    ['url' => '/chats/'.$chat->id]
-                );
-            } catch (\Exception) { /* non-fatal */ }
-        }
-    }
-
-    /**
-     * Generate and persist an AI mediation response.
-     *
-     * @throws Exception if OpenAI call fails
-     */
-    public function mediate(Chat $chat): Message
-    {
-        $context = $this->contextBuilder->build($chat);
-        $participantNames = array_column($context['participants'], 'name');
-
-        $this->handleToneCacheAndMemory($chat, $context);
-
-        $systemPrompt = $this->getMediatorSystemPrompt($chat->context_type, $participantNames)
-            . $this->getEvidenceFrameworks($chat->context_type);
-
-        $rollingSummary = $this->maybeGetRollingSummary($chat, $context);
-
-        $userMessage = $this->buildMediationUserMessage(
-            $context['participants'],
-            $context['messages'],
-            $context['context_notes'],
-            $context['participation_stats'],
-            $context['stage'],
-            $context['tone'],
-            $context['total_message_count'],
-            $context['agreements'],
-            $rollingSummary
-        );
-
-        Log::info('[AI] mediate: calling OpenAI', [
-            'chat_id'          => $chat->id,
-            'participants'     => $participantNames,
-            'context_type'     => $chat->context_type,
-            'system_prompt_len'=> strlen($systemPrompt),
-            'user_msg_len'     => strlen($userMessage),
-        ]);
-
-        $response = OpenAI::chat()->create([
-            'model' => 'gpt-4o',
-            'messages' => [
-                ['role' => 'system', 'content' => $systemPrompt],
-                ['role' => 'user', 'content' => $userMessage],
-            ],
-            'max_tokens' => 700,
-            'temperature' => 0.85,
-        ]);
-
-        $aiContent = $response->choices[0]->message->content;
-
-        Log::info('[AI] mediate: OpenAI responded', [
-            'chat_id'        => $chat->id,
-            'response_length'=> strlen($aiContent ?? ''),
-            'finish_reason'  => $response->choices[0]->finishReason ?? null,
-        ]);
-
-        $aiMessage = Message::create([
-            'chat_id' => $chat->id,
-            'sender_type' => 'ai',
-            'sender_id' => null,
-            'content' => $aiContent,
-        ]);
-
-        try {
-            broadcast(new MessageSent($chat->id, [
-                'id' => $aiMessage->id,
-                'sender_type' => 'ai',
-                'sender' => null,
-                'content' => $aiContent,
-                'created_at' => $aiMessage->created_at->toISOString(),
-            ]));
-        } catch (\Exception) { /* non-fatal: Reverb may not be running */ }
-
-        // Background push to all participants
-        $participantIds = $chat->participants()->pluck('users.id')->toArray();
-        try {
-            $this->webPushService->sendToUsers(
-                $participantIds,
-                'Accord',
-                mb_substr($aiContent, 0, 120),
-                ['url' => '/chats/'.$chat->id]
-            );
-        } catch (\Exception) { /* non-fatal */ }
-
-        return $aiMessage;
-    }
-
-    /**
-     * Send a short nudge when both participants have gone quiet for 10+ minutes.
-     * Called by CheckChatEngagement job.
-     */
-    public function sendEngagementNudge(Chat $chat): void
-    {
-        $context = $this->contextBuilder->build($chat);
-        $participantNames = array_column($context['participants'], 'name');
-
-        $systemPrompt = $this->getMediatorSystemPrompt($chat->context_type, $participantNames)
-            ."\n\nIMPORTANT: Both participants have gone quiet. Send a single warm sentence that gently re-engages them — reference something specific from the conversation. No question needed.";
-
-        $userMessage = $this->buildMediationUserMessage(
-            $context['participants'],
-            $context['messages'],
-            $context['context_notes'],
-            $context['participation_stats'],
-            $context['stage'],
-            $context['tone'],
-            $context['total_message_count'],
-            $context['agreements']
-        );
-
-        $response = OpenAI::chat()->create([
-            'model' => 'gpt-4o',
-            'messages' => [
-                ['role' => 'system', 'content' => $systemPrompt],
-                ['role' => 'user', 'content' => $userMessage],
-            ],
-            'max_tokens' => 60,
-            'temperature' => 0.8,
-        ]);
-
-        $content = trim($response->choices[0]->message->content ?? '');
-        if (empty($content)) {
-            return;
-        }
-
-        $message = Message::create([
-            'chat_id' => $chat->id,
-            'sender_type' => 'ai',
-            'sender_id' => null,
-            'content' => $content,
-        ]);
-
-        try {
-            broadcast(new MessageSent($chat->id, [
-                'id' => $message->id,
-                'sender_type' => 'ai',
-                'sender' => null,
-                'content' => $content,
-                'created_at' => $message->created_at->toISOString(),
-            ]));
-        } catch (\Exception) { /* non-fatal */ }
-
-        $participantIds = $chat->participants()->pluck('users.id')->toArray();
-        try {
-            $this->webPushService->sendToUsers($participantIds, 'Accord', $content, ['url' => '/chats/'.$chat->id]);
-        } catch (\Exception) { /* non-fatal */ }
-    }
-
-    /**
-     * For chats longer than the recent-message window, generate (and cache) a
-     * 2–3 sentence summary of the older context so nothing important is lost.
-     */
-    private function maybeGetRollingSummary(Chat $chat, array $context): string
-    {
-        if ($context['older_boundary_id'] === null) {
-            return '';
-        }
-
-        $cacheKey = "chat_rolling_summary_{$chat->id}_{$context['older_boundary_id']}";
-
-        return Cache::remember($cacheKey, 3600, function () use ($chat, $context) {
-            $olderMessages = $chat->messages()
-                ->with('sender')
-                ->where('id', '<', $context['older_boundary_id'])
-                ->orderBy('id')
-                ->get()
-                ->map(fn ($m) => '['.($m->sender_type === 'ai' ? 'Accord' : ($m->sender?->name ?? 'User')).'] '.$m->content)
-                ->implode("\n");
-
-            if (empty($olderMessages)) {
-                return '';
-            }
-
-            $response = OpenAI::chat()->create([
-                'model' => 'gpt-4o',
-                'messages' => [
-                    ['role' => 'system', 'content' => 'Summarise this conversation excerpt in 2–3 sentences. Cover: what was discussed, any tensions raised, and any agreements reached. Be factual and neutral.'],
-                    ['role' => 'user', 'content' => $olderMessages],
-                ],
-                'max_tokens' => 120,
-                'temperature' => 0.3,
-            ]);
-
-            return trim($response->choices[0]->message->content ?? '');
-        });
-    }
-
-    /**
-     * Cache the current tone and trigger memory extraction on a tension→resolution shift.
-     * This is smarter than the fixed every-20-messages extraction.
-     */
-    private function handleToneCacheAndMemory(Chat $chat, array $context): void
-    {
-        $previousTone = Cache::get("chat_tone_{$chat->id}", 'neutral');
-        Cache::put("chat_tone_{$chat->id}", $context['tone'], 3600);
-
-        // Tension resolved → good moment to capture behavioral memory
-        if ($previousTone === 'tense' && in_array($context['tone'], ['neutral', 'progressing'])) {
-            $lastExtractKey = "last_memory_extraction_{$chat->id}";
-            $lastExtractCount = Cache::get($lastExtractKey, 0);
-
-            if ($context['total_message_count'] - $lastExtractCount >= 8) {
-                Cache::put($lastExtractKey, $context['total_message_count'], 3600);
-                try {
-                    app(AiMemoryService::class)->extractAndStoreMemory($chat);
-                } catch (\Exception) { /* non-fatal */ }
-            }
-        }
+        return trim($this->anthropic->message(
+            'You write warm, constructive summaries of mediation sessions. Be concise — 2–3 short paragraphs.',
+            [['role' => 'user', 'content' => "Summarize this mediation session between {$names}.\n\nCover:\n- What the session was about\n- What each person expressed\n- Any agreements or next steps suggested by Accord\n\nKeep it positive and forward-looking.\n\n{$context['transcript']}"]],
+            maxTokens: 400,
+        ));
     }
 
     /**
      * Send a brief closing message as the session is finalized.
-     * Acknowledges what was accomplished and wishes them well.
      */
     public function closingRitual(Chat $chat): ?Message
     {
@@ -385,28 +261,23 @@ class AiReasoningService
             return null;
         }
 
-        $response = OpenAI::chat()->create([
-            'model' => 'gpt-4o',
-            'messages' => [
-                [
-                    'role' => 'system',
-                    'content' => 'You are Accord. This session is closing. Write a brief, warm closing message (2–3 sentences) that: acknowledges what was discussed or accomplished, names any concrete next step if one emerged, and wishes them well. Be specific — reference what actually came up. Never be generic.',
-                ],
-                [
-                    'role' => 'user',
-                    'content' => "Write the closing message for this session between {$names}.\n\n{$context['transcript']}",
-                ],
-            ],
-            'max_tokens' => 150,
-            'temperature' => 0.7,
-        ]);
-
-        $content = trim($response->choices[0]->message->content ?? '');
+        $content = trim($this->anthropic->message(
+            'You are Accord. This session is closing. Write a brief, warm closing message (2–3 sentences) that: acknowledges what was discussed or accomplished, names any concrete next step if one emerged, and wishes them well. Be specific — reference what actually came up. Never be generic.',
+            [['role' => 'user', 'content' => "Write the closing message for this session between {$names}.\n\n{$context['transcript']}"]],
+            maxTokens: 150,
+        ));
 
         if (empty($content)) {
             return null;
         }
 
+        return $this->persistAndBroadcast($chat, $content);
+    }
+
+    // ── PRIVATE HELPERS ───────────────────────────────────────────────────
+
+    private function persistAndBroadcast(Chat $chat, string $content): Message
+    {
         $message = Message::create([
             'chat_id' => $chat->id,
             'sender_type' => 'ai',
@@ -424,6 +295,61 @@ class AiReasoningService
             ]));
         } catch (\Exception) { /* non-fatal */ }
 
+        $participantIds = $chat->participants()->pluck('users.id')->toArray();
+
+        try {
+            $this->webPushService->sendToUsers(
+                $participantIds,
+                'Accord',
+                mb_substr($content, 0, 120),
+                ['url' => '/chats/'.$chat->id],
+            );
+        } catch (\Exception) { /* non-fatal */ }
+
         return $message;
+    }
+
+    /**
+     * Check if new content is too similar to recent AI messages.
+     */
+    private function isRepetitive(Chat $chat, string $newContent): bool
+    {
+        $recentAi = $chat->messages()
+            ->where('sender_type', 'ai')
+            ->latest()
+            ->take(5)
+            ->pluck('content')
+            ->toArray();
+
+        $normalizedNew = $this->normalizeForComparison($newContent);
+
+        foreach ($recentAi as $existing) {
+            similar_text($normalizedNew, $this->normalizeForComparison($existing), $percent);
+            if ($percent > 50) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function normalizeForComparison(string $text): string
+    {
+        $text = mb_strtolower($text);
+        $text = preg_replace('/[^\w\s]/u', '', $text);
+
+        return trim(preg_replace('/\s+/', ' ', $text));
+    }
+
+    /**
+     * Re-generate with an anti-repetition nudge.
+     */
+    private function regenerateWithVariation(string $systemPrompt, array $messages): string
+    {
+        return $this->anthropic->message(
+            $systemPrompt."\n\nIMPORTANT: Your last few responses were very similar. Say something genuinely different, or if there's nothing new to add, keep it to one brief sentence.",
+            $messages,
+            maxTokens: 1024,
+        );
     }
 }

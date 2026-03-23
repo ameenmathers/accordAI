@@ -5,6 +5,7 @@ use App\Models\Message;
 use App\Models\User;
 use App\Services\AiMemoryService;
 use App\Services\AiReasoningService;
+use App\Services\MediationAssessmentService;
 use App\Services\WebPushService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
@@ -37,11 +38,11 @@ function makeActiveChat(User $creator, User $participant): Chat
 
 function mockAiServices(): void
 {
-    // Replace AI services with mocks so tests never call OpenAI/Anthropic
+    // Replace AI services with mocks so tests never call Anthropic
     app()->instance(AiReasoningService::class, Mockery::mock(AiReasoningService::class, function ($mock) {
+        $mock->shouldReceive('triage')->andReturn('respond');
         $mock->shouldReceive('mediateStreaming')->andReturnUsing(function ($chat, $onToken) {
             $onToken('Hello from Accord.');
-            // Persist the AI message so DB assertions work
             Message::create([
                 'chat_id' => $chat->id,
                 'sender_type' => 'ai',
@@ -60,6 +61,10 @@ function mockAiServices(): void
         $mock->shouldReceive('generateSummary')->andReturn('Test summary.');
         $mock->shouldReceive('closingRitual')->andReturn(null);
         $mock->shouldReceive('sendEngagementNudge')->andReturn(null);
+    }));
+
+    app()->instance(MediationAssessmentService::class, Mockery::mock(MediationAssessmentService::class, function ($mock) {
+        $mock->shouldIgnoreMissing();
     }));
 
     app()->instance(AiMemoryService::class, Mockery::mock(AiMemoryService::class, function ($mock) {

@@ -36,11 +36,6 @@ return [
     ],
 
     // ── AccordAI AI Services ─────────────────────────────────────────────
-    'openai' => [
-        'api_key' => env('OPENAI_API_KEY'),
-        'organization' => env('OPENAI_ORGANIZATION'),
-    ],
-
     'anthropic' => [
         'api_key' => env('ANTHROPIC_API_KEY'),
     ],
